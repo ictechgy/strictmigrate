@@ -1,0 +1,136 @@
+Building for debugging...
+[Planning deferred tasks]
+[30 / 54]
+[31 / 55] ImagePipelineCore
+[41 / 93]
+[48 / 93]
+[50 / 93]
+[54 / 93]
+[57 / 93]
+[62 / 93]
+[63 / 93]
+[64 / 93]
+[65 / 93]
+/Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/Sources/ImagePipelineCore/Decoder.swift:16:23: [1;33mwarning: [1;39mstatic property 'shared' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/mutable-global-variable\MutableGlobalVariable]8;;\]
+[0;36m14 |[0;0m public enum ImageDecoder {
+[0;36m15 |[0;0m     /// Global mutable state holding a non-Sendable type.
+[0;36m16 |[0;0m     public static var shared = DecodeContext()
+   [0;36m|[0;0m                       |- [1;33mwarning: [1;39mstatic property 'shared' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/mutable-global-variable\MutableGlobalVariable]8;;\]
+   [0;36m|[0;0m                       |- [1;39mnote: [1;39mconvert 'shared' to a 'let' constant to make 'Sendable' shared state immutable[0;0m
+   [0;36m|[0;0m                       |- [1;39mnote: [1;39madd '@MainActor' to make static property 'shared' part of global actor 'MainActor'[0;0m
+   [0;36m|[0;0m                       `- [1;39mnote: [1;39mdisable concurrency-safety checks if accesses are protected by an external synchronization mechanism[0;0m
+[0;36m17 |[0;0m }
+[0;36m18 |[0;0m 
+
+[#MutableGlobalVariable]: <https://docs.swift.org/compiler/documentation/diagnostics/mutable-global-variable>
+[79 / 95] DemoApp
+/Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/Sources/DemoApp/main.swift:7:32: [1;33mwarning: [1;39msending 'pipeline' risks causing data races; this is an error in the Swift 6 language mode[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/region-isolation\RegionIsolation]8;;\::]8;;https://docs.swift.org/compiler/documentation/diagnostics/sending-risks-data-race\SendingRisksDataRace]8;;\]
+ [0;36m5 |[0;0m 
+ [0;36m6 |[0;0m Task {
+ [0;36m7 |[0;0m     let count = await pipeline.runAll(keys: ["a", "b", "c"])
+   [0;36m|[0;0m                                |- [1;33mwarning: [1;39msending 'pipeline' risks causing data races; this is an error in the Swift 6 language mode[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/region-isolation\RegionIsolation]8;;\::]8;;https://docs.swift.org/compiler/documentation/diagnostics/sending-risks-data-race\SendingRisksDataRace]8;;\]
+   [0;36m|[0;0m                                `- [1;39mnote: [1;39msending main actor-isolated 'pipeline' to @concurrent instance method 'runAll(keys:)' risks causing data races between @concurrent and main actor-isolated uses[0;0m
+ [0;36m8 |[0;0m     await pipeline.warmup()
+ [0;36m9 |[0;0m     print("processed:", count)
+
+/Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/Sources/DemoApp/main.swift:8:20: [1;33mwarning: [1;39msending 'pipeline' risks causing data races; this is an error in the Swift 6 language mode[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/region-isolation\RegionIsolation]8;;\::]8;;https://docs.swift.org/compiler/documentation/diagnostics/sending-risks-data-race\SendingRisksDataRace]8;;\]
+ [0;36m6 |[0;0m Task {
+ [0;36m7 |[0;0m     let count = await pipeline.runAll(keys: ["a", "b", "c"])
+ [0;36m8 |[0;0m     await pipeline.warmup()
+   [0;36m|[0;0m                    |- [1;33mwarning: [1;39msending 'pipeline' risks causing data races; this is an error in the Swift 6 language mode[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/region-isolation\RegionIsolation]8;;\::]8;;https://docs.swift.org/compiler/documentation/diagnostics/sending-risks-data-race\SendingRisksDataRace]8;;\]
+   [0;36m|[0;0m                    `- [1;39mnote: [1;39msending main actor-isolated 'pipeline' to @concurrent instance method 'warmup()' risks causing data races between @concurrent and main actor-isolated uses[0;0m
+ [0;36m9 |[0;0m     print("processed:", count)
+[0;36m10 |[0;0m }
+
+[#RegionIsolation]: <https://docs.swift.org/compiler/documentation/diagnostics/region-isolation>
+[#SendingRisksDataRace]: <https://docs.swift.org/compiler/documentation/diagnostics/sending-risks-data-race>
+/Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/Sources/DemoApp/main.swift:7:32: [1;33mwarning: [1;39msending 'pipeline' risks causing data races; this is an error in the Swift 6 language mode[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/region-isolation\RegionIsolation]8;;\::]8;;https://docs.swift.org/compiler/documentation/diagnostics/sending-risks-data-race\SendingRisksDataRace]8;;\]
+ [0;36m5 |[0;0m 
+ [0;36m6 |[0;0m Task {
+ [0;36m7 |[0;0m     let count = await pipeline.runAll(keys: ["a", "b", "c"])
+   [0;36m|[0;0m                                |- [1;33mwarning: [1;39msending 'pipeline' risks causing data races; this is an error in the Swift 6 language mode[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/region-isolation\RegionIsolation]8;;\::]8;;https://docs.swift.org/compiler/documentation/diagnostics/sending-risks-data-race\SendingRisksDataRace]8;;\]
+   [0;36m|[0;0m                                `- [1;39mnote: [1;39msending main actor-isolated 'pipeline' to @concurrent instance method 'runAll(keys:)' risks causing data races between @concurrent and main actor-isolated uses[0;0m
+ [0;36m8 |[0;0m     await pipeline.warmup()
+ [0;36m9 |[0;0m     print("processed:", count)
+
+/Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/Sources/DemoApp/main.swift:8:20: [1;33mwarning: [1;39msending 'pipeline' risks causing data races; this is an error in the Swift 6 language mode[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/region-isolation\RegionIsolation]8;;\::]8;;https://docs.swift.org/compiler/documentation/diagnostics/sending-risks-data-race\SendingRisksDataRace]8;;\]
+ [0;36m6 |[0;0m Task {
+ [0;36m7 |[0;0m     let count = await pipeline.runAll(keys: ["a", "b", "c"])
+ [0;36m8 |[0;0m     await pipeline.warmup()
+   [0;36m|[0;0m                    |- [1;33mwarning: [1;39msending 'pipeline' risks causing data races; this is an error in the Swift 6 language mode[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/region-isolation\RegionIsolation]8;;\::]8;;https://docs.swift.org/compiler/documentation/diagnostics/sending-risks-data-race\SendingRisksDataRace]8;;\]
+   [0;36m|[0;0m                    `- [1;39mnote: [1;39msending main actor-isolated 'pipeline' to @concurrent instance method 'warmup()' risks causing data races between @concurrent and main actor-isolated uses[0;0m
+ [0;36m9 |[0;0m     print("processed:", count)
+[0;36m10 |[0;0m }
+
+[#RegionIsolation]: <https://docs.swift.org/compiler/documentation/diagnostics/region-isolation>
+[#SendingRisksDataRace]: <https://docs.swift.org/compiler/documentation/diagnostics/sending-risks-data-race>
+[91 / 99] DemoApp-product
+error: SwiftCompile normal arm64 /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/Sources/ImagePipelineCore/Renderer.swift failed with a nonzero exit code. Command line:     cd /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples
+    builtin-SwiftPerFileCompile Renderer.swift
+/Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/Sources/ImagePipelineCore/Renderer.swift:17:18: [1;31merror: [1;39mcall to main actor-isolated instance method 'render(name:)' in a synchronous nonisolated context[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call\ActorIsolatedCall]8;;\]
+ [0;36m7 |[0;0m     public init() {}
+ [0;36m8 |[0;0m 
+ [0;36m9 |[0;0m     public func render(name: String) -> String {
+   [0;36m|[0;0m                 `- [1;39mnote: [1;39mcalls to instance method 'render(name:)' from outside of its actor context are implicitly asynchronous[0;0m
+[0;36m10 |[0;0m         "\(theme):\(name).png"
+[0;36m11 |[0;0m     }
+   [0;36m:[0;0m
+[0;36m14 |[0;0m public enum RenderService {
+[0;36m15 |[0;0m     /// Calls a MainActor-isolated method from a nonisolated context.
+[0;36m16 |[0;0m     public static func renderSync(_ renderer: ThumbnailRenderer) -> String {
+   [0;36m|[0;0m                        `- [1;39mnote: [1;39madd '@MainActor' to make static method 'renderSync' part of global actor 'MainActor'[0;0m
+[0;36m17 |[0;0m         renderer.render(name: "avatar")
+   [0;36m|[0;0m                  `- [1;31merror: [1;39mcall to main actor-isolated instance method 'render(name:)' in a synchronous nonisolated context[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call\ActorIsolatedCall]8;;\]
+[0;36m18 |[0;0m     }
+[0;36m19 |[0;0m 
+
+/Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/Sources/ImagePipelineCore/Renderer.swift:21:24: [1;31merror: [1;39mcall to main actor-isolated initializer 'init()' in a synchronous nonisolated context[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call\ActorIsolatedCall]8;;\]
+ [0;36m5 |[0;0m     public var theme: String = "light"
+ [0;36m6 |[0;0m 
+ [0;36m7 |[0;0m     public init() {}
+   [0;36m|[0;0m            `- [1;39mnote: [1;39mcalls to initializer 'init()' from outside of its actor context are implicitly asynchronous[0;0m
+ [0;36m8 |[0;0m 
+ [0;36m9 |[0;0m     public func render(name: String) -> String {
+   [0;36m:[0;0m
+[0;36m18 |[0;0m     }
+[0;36m19 |[0;0m 
+[0;36m20 |[0;0m     public static func spawnWork() {
+   [0;36m|[0;0m                        `- [1;39mnote: [1;39madd '@MainActor' to make static method 'spawnWork()' part of global actor 'MainActor'[0;0m
+[0;36m21 |[0;0m         let renderer = ThumbnailRenderer()
+   [0;36m|[0;0m                        `- [1;31merror: [1;39mcall to main actor-isolated initializer 'init()' in a synchronous nonisolated context[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call\ActorIsolatedCall]8;;\]
+[0;36m22 |[0;0m         Task {
+[0;36m23 |[0;0m             // MainActor-isolated state touched from a nonisolated task.
+
+/Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/Sources/ImagePipelineCore/Renderer.swift:24:22: [1;31merror: [1;39mmain actor-isolated property 'theme' can not be mutated from a nonisolated context[0;0m
+ [0;36m3 |[0;0m @MainActor
+ [0;36m4 |[0;0m public final class ThumbnailRenderer {
+ [0;36m5 |[0;0m     public var theme: String = "light"
+   [0;36m|[0;0m                `- [1;39mnote: [1;39mmutation of this property is only permitted within the actor[0;0m
+ [0;36m6 |[0;0m 
+ [0;36m7 |[0;0m     public init() {}
+   [0;36m:[0;0m
+[0;36m22 |[0;0m         Task {
+[0;36m23 |[0;0m             // MainActor-isolated state touched from a nonisolated task.
+[0;36m24 |[0;0m             renderer.theme = "dark"
+   [0;36m|[0;0m                      |- [1;31merror: [1;39mmain actor-isolated property 'theme' can not be mutated from a nonisolated context[0;0m
+   [0;36m|[0;0m                      `- [1;39mnote: [1;39mconsider declaring an isolated method on 'MainActor' to perform the mutation[0;0m
+[0;36m25 |[0;0m         }
+[0;36m26 |[0;0m     }
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+Failed frontend command:
+/Applications/Xcode-27.0.0-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend -frontend -c /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/Sources/ImagePipelineCore/Decoder.swift /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/Sources/ImagePipelineCore/Pipeline.swift -primary-file /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/Sources/ImagePipelineCore/Renderer.swift -emit-dependencies-path /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out/Intermediates.noindex/DemoConcurrency.build/Debug/ImagePipelineCore-t.build/Objects-normal/arm64/Renderer.d -emit-const-values-path /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out/Intermediates.noindex/DemoConcurrency.build/Debug/ImagePipelineCore-t.build/Objects-normal/arm64/Renderer.swiftconstvalues -emit-reference-dependencies-path /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out/Intermediates.noindex/DemoConcurrency.build/Debug/ImagePipelineCore-t.build/Objects-normal/arm64/Renderer.swiftdeps -serialize-diagnostics-path /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out/Intermediates.noindex/DemoConcurrency.build/Debug/ImagePipelineCore-t.build/Objects-normal/arm64/Renderer.dia -target arm64-apple-macos12.0 -disable-cross-import-overlay-search -load-resolved-plugin /Applications/Xcode-27.0.0-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins/libFoundationMacros.dylib\#/Applications/Xcode-27.0.0-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/bin/swift-plugin-server\#FoundationMacros -load-resolved-plugin /Applications/Xcode-27.0.0-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins/libObservationMacros.dylib\#/Applications/Xcode-27.0.0-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/bin/swift-plugin-server\#ObservationMacros -load-resolved-plugin /Applications/Xcode-27.0.0-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins/libSwiftMacros.dylib\#/Applications/Xcode-27.0.0-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/bin/swift-plugin-server\#SwiftMacros -disable-implicit-swift-modules -Xcc -fno-implicit-modules -Xcc -fno-implicit-module-maps -explicit-swift-module-map-file /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out/Intermediates.noindex/DemoConcurrency.build/Debug/ImagePipelineCore-t.build/Objects-normal/arm64/ImagePipelineCore-dependencies-1.json -Xllvm -aarch64-use-tbi -enable-objc-interop -stack-check -sdk /Applications/Xcode-27.0.0-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk -I /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out/Products/Debug -Isystem /Applications/Xcode-27.0.0-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib -F /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out/Products/Debug -F /Applications/Xcode-27.0.0-beta.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks -module-cache-path /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out/Intermediates.noindex/SwiftExplicitPrecompiledModules -color-diagnostics -Xcc -fcolor-diagnostics -enable-testing -g -debug-info-format\=dwarf -dwarf-version\=4 -swift-version 5 -Onone -D SWIFT_PACKAGE -D DEBUG -D SWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE -D Xcode -serialize-debugging-options -enable-experimental-feature DebugDescriptionMacro -strict-concurrency\=complete -empty-abi-descriptor -validate-clang-modules-once -clang-build-session-file /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out/ModuleCache.noindex/Session.modulevalidation -Xcc -working-directory -Xcc /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples -enable-anonymous-context-mangled-names -file-compilation-dir /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples -Xcc -D_LIBCPP_HARDENING_MODE\=_LIBCPP_HARDENING_MODE_DEBUG -Xcc -ivfsstatcache -Xcc /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out/SDKStatCaches.noindex/macosx27.0-26A5388f-a0facfad118c1a7a18f0aad9463f6549522ff84e39bc60f32b1a8e0fe173b1b3.sdkstatcache -Xcc -fmodules-prune-interval\=86400 -Xcc -fmodules-prune-after\=345600 -Xcc -I/Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out/Products/Debug/include -Xcc -I/Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out/Intermediates.noindex/DemoConcurrency.build/Debug/ImagePipelineCore-t.build/DerivedSources-normal/arm64 -Xcc -I/Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out/Intermediates.noindex/DemoConcurrency.build/Debug/ImagePipelineCore-t.build/DerivedSources/arm64 -Xcc -I/Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out/Intermediates.noindex/DemoConcurrency.build/Debug/ImagePipelineCore-t.build/DerivedSources -Xcc -DSWIFT_PACKAGE -Xcc -DDEBUG\=1 -no-auto-bridging-header-chaining -module-name ImagePipelineCore -package-name democoncurrency -const-gather-protocols-file /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out/Intermediates.noindex/DemoConcurrency.build/Debug/ImagePipelineCore-t.build/Objects-normal/arm64/ImagePipelineCore_const_extract_protocols.json -disable-clang-spi -clang-target arm64-apple-macos27.0 -target-sdk-version 27.0 -target-sdk-name macosx27.0 -in-process-plugin-server-path /Application[92 / 99] ImagePipelineCore
+s/Xcode-27.0.0-beta.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/libSwiftInProcPluginServer.dylib -parse-as-library -o /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out/Intermediates.noindex/DemoConcurrency.build/Debug/ImagePipelineCore-t.build/Objects-normal/arm64/Renderer.o -debug-module-path /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out/Intermediates.noindex/DemoConcurrency.build/Debug/ImagePipelineCore-t.build/Objects-normal/arm64/ImagePipelineCore.swiftmodule -index-unit-output-path /DemoConcurrency.build/Debug/ImagePipelineCore-t.build/Objects-normal/arm64/Renderer.o -index-store-path /Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/.build/out -index-system-modules
+/Users/jinhongan/Desktop/Z_Workspace/strictmigrate/Examples/DemoConcurrency/Sources/ImagePipelineCore/Decoder.swift:16:23: [1;33mwarning: [1;39mstatic property 'shared' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/mutable-global-variable\MutableGlobalVariable]8;;\]
+[0;36m14 |[0;0m public enum ImageDecoder {
+[0;36m15 |[0;0m     /// Global mutable state holding a non-Sendable type.
+[0;36m16 |[0;0m     public static var shared = DecodeContext()
+   [0;36m|[0;0m                       |- [1;33mwarning: [1;39mstatic property 'shared' is not concurrency-safe because it is nonisolated global shared mutable state; this is an error in the Swift 6 language mode[0;0m [#]8;;https://docs.swift.org/compiler/documentation/diagnostics/mutable-global-variable\MutableGlobalVariable]8;;\]
+   [0;36m|[0;0m                       |- [1;39mnote: [1;39mconvert 'shared' to a 'let' constant to make 'Sendable' shared state immutable[0;0m
+   [0;36m|[0;0m                       |- [1;39mnote: [1;39madd '@MainActor' to make static property 'shared' part of global actor 'MainActor'[0;0m
+   [0;36m|[0;0m                       `- [1;39mnote: [1;39mdisable concurrency-safety checks if accesses are protected by an external synchronization mechanism[0;0m
+[0;36m17 |[0;0m }
+[0;36m18 |[0;0m 
+
+[#MutableGlobalVariable]: <https://docs.swift.org/compiler/documentation/diagnostics/mutable-global-variable>
+error: Build failed

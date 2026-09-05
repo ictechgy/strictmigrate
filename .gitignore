@@ -1,0 +1,12 @@
+.build/
+.strictmigrate/
+.DS_Store
+*.xcodeproj
+.swiftpm/
+
+# internal planning document, not part of the OSS repo
+기획서.md
+
+Examples/DemoConcurrency/.build/
+Examples/DemoConcurrency/.strictmigrate/
+Examples/DemoConcurrency/.swiftpm/
