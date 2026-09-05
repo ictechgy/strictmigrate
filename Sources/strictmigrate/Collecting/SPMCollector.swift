@@ -4,6 +4,7 @@ import Foundation
 struct PackageTarget: Equatable, Sendable {
     var name: String
     var path: String
+    var dependencies: [String] = []
 }
 
 /// Maps diagnostic file paths to targets by longest matching source root.
@@ -79,7 +80,15 @@ enum PackageInspector {
         return rawTargets.compactMap { raw in
             guard let name = raw["name"] as? String, let path = raw["path"] as? String else { return nil }
             let relative = path.hasPrefix("/") ? PathUtils.relativize(path, against: packageRoot) : path
-            return PackageTarget(name: name, path: relative)
+            let dependencies = raw["target_dependencies"] as? [String] ?? []
+            return PackageTarget(name: name, path: relative, dependencies: dependencies)
+        }
+    }
+
+    /// Target name → names of targets it depends on, for leaf-first ordering.
+    static func dependencyGraph(_ targets: [PackageTarget]) -> [String: [String]] {
+        targets.reduce(into: [:]) { graph, target in
+            graph[target.name] = target.dependencies
         }
     }
 }

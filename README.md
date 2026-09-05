@@ -4,7 +4,7 @@
 
 The official migration guide is a great 40-page document. strictmigrate turns those 40 pages into an executable task queue: the compiler counts the verdicts, the journal records where the migration stands, and the agent (or a human) holds the pen in between.
 
-**v0.1 — measure, journal, report.** Useful with zero agents: point it at a Swift package, get per-target strict-concurrency diagnostic counts, and track them to zero.
+**v0.2 — measure, journal, slice, dispatch.** Useful with zero agents: point it at a Swift package, get per-target diagnostic counts, slice them into atomic one-symbol tasks, and work the queue with ready-to-paste prompts.
 
 ```console
 $ strictmigrate status
@@ -67,6 +67,38 @@ $ strictmigrate status --format json     # feed CI or dashboards
 
 Commit `strictmigrate.yaml.journal`. Raw build logs land in `.strictmigrate/`, which ignores itself.
 
+### The task queue (manual mode)
+
+```console
+$ strictmigrate slice
+Queued 5 tasks (dropped 0 stale queued) — journal updated: strictmigrate.yaml.journal
+
+Next up:
+  t-0001  ImagePipelineCore  Sources/ImagePipelineCore/Decoder.swift  [shared]  (sendable-violation×1)
+  t-0002  ImagePipelineCore  Sources/ImagePipelineCore/Renderer.swift  [renderSync]  (actor-isolation×1)
+  t-0003  ImagePipelineCore  Sources/ImagePipelineCore/Renderer.swift  [spawnWork]  (actor-isolation×2)
+  t-0004  DemoApp            Sources/DemoApp/main.swift  [(file scope)]  (region-violation×1)
+  ...
+
+$ strictmigrate next
+Task t-0001 — target ImagePipelineCore
+File: Sources/ImagePipelineCore/Decoder.swift
+Symbol(s): shared
+
+Diagnostics to fix — only these:
+  - Sources/ImagePipelineCore/Decoder.swift:16:23 [sendable] warning: static property 'shared' is not concurrency-safe …
+
+Scope rules (hard boundaries):
+1. Modify ONLY `Sources/ImagePipelineCore/Decoder.swift`, ONLY the symbol(s) above.
+2. Do not touch other files or symbols, even if you see problems there — they belong to other tasks.
+…
+Verify (the compiler is the judge):
+  swift build --no-color-diagnostics -Xswiftc -strict-concurrency=complete
+  strictmigrate measure   # updates the journal; closes t-0001 when clean
+```
+
+Paste that prompt into your editor, a chat agent, or a teammate — fix it, then `strictmigrate measure` again. The measure run reconciles the queue automatically: tasks whose diagnostics are gone close as `passed`; partial fixes stay open. Nothing is remembered in anyone's head; it is all in the journal.
+
 A live example lives in [`Examples/DemoConcurrency`](Examples/DemoConcurrency) — a tiny package with intentional violations of all three categories.
 
 ## Commands
@@ -74,8 +106,11 @@ A live example lives in [`Examples/DemoConcurrency`](Examples/DemoConcurrency) �
 | Command | What it does |
 |---|---|
 | `strictmigrate init` | Create an empty journal in the package root. |
-| `strictmigrate measure` | Build with strict concurrency, count diagnostics per target, update the journal. |
+| `strictmigrate measure` | Build with strict concurrency, count diagnostics per target, update the journal, reconcile open tasks. |
 | `strictmigrate status` | Render the journal as a report (`pretty`, `markdown`, `json`). |
+| `strictmigrate slice` | Cluster the last measurement into atomic tasks (one symbol group = one task). |
+| `strictmigrate next` | Print the next task with a ready-to-paste prompt (`--peek` to leave it queued). |
+| `strictmigrate tasks` | List tasks and their statuses. |
 
 ### `measure` options
 
@@ -134,6 +169,12 @@ tasks: []                    # v0.2+: atomic tasks (one task = one commit = one 
 
 Known ground roughness, handled explicitly: incremental builds don't re-emit cached warnings (fresh scratch by default), xcresult locations are 0-based (normalized), and the root `issues` mirror per-action summaries (deduplicated).
 
+### How slicing works
+
+- **Clustering** — one task per (target, file, enclosing symbol). A lightweight brace-depth scanner resolves each diagnostic to its enclosing declaration, so half-fixed symbols never split across tasks — the classic cause of re-appearing diagnostics. Diagnostics in top-level code cluster as `(file scope)`.
+- **Ordering** — leaf targets first: `swift package describe` dependency edges are topologically sorted so dependencies are fixed before dependents, and each fix gets confirmed by downstream recompiles. Within a target, smaller tasks come first.
+- **Reconciliation** — `measure` resolves current diagnostics to (file, symbol) identities and closes open tasks whose symbols are clean, recording the build verdict honestly (a task can pass while the overall build still fails elsewhere). Partial fixes stay open; the queue itself is always re-derivable via `slice`.
+
 ## Design principles
 
 - **The compiler is the judge.** Verdicts (build, tests, counts) are deterministic. The harness reports them, never manipulates them.
@@ -144,8 +185,7 @@ Known ground roughness, handled explicitly: incremental builds don't re-emit cac
 
 ## Roadmap
 
-- **v0.2** — task slicing + manual mode: cluster diagnostics by file/symbol, prioritize leaf targets, `strictmigrate next` prints the task and its prompt for copy-paste.
-- **v0.3** — agent executor: claude-code adapter, automatic verdict/commit/revert, attempt limits.
+- **v0.3** — agent executor: claude-code adapter runs `next` prompts automatically, verdicts via build + tests, one task = one commit = one revert boundary, attempt limits.
 - **v0.4** — codex/ACP adapters (Xcode agents), ThreadSanitizer verdicts, cross-target regression detection.
 - **v0.5 (undecided)** — Kotlin K2/JVM strict mode adapter.
 

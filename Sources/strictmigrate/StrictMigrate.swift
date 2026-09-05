@@ -10,8 +10,8 @@ struct StrictMigrate: ParsableCommand {
             The compiler is the judge, the journal is the source of truth.
             v0.1 measures diagnostics per target and tracks progress — no agent required.
             """,
-        version: "0.1.0",
-        subcommands: [Init.self, Measure.self, Status.self]
+        version: "0.2.0",
+        subcommands: [Init.self, Measure.self, Status.self, Slice.self, Next.self, Tasks.self]
     )
 }
 
@@ -122,6 +122,11 @@ extension StrictMigrate {
 
             let previous = journal.targets
             journal.applyMeasurement(at: Date(), level: level, results: outcome.perTarget)
+            let closedTasks = journal.reconcileTasks(
+                against: outcome.diagnostics,
+                packageRoot: root,
+                buildExitCode: outcome.buildExitCode
+            )
             try JournalStore.save(journal, to: journalPath)
 
             let workDirectory = try JournalStore.ensureWorkDirectory(in: root)
@@ -131,6 +136,13 @@ extension StrictMigrate {
             try outcome.rawLog.write(toFile: logPath, atomically: true, encoding: .utf8)
 
             print(Self.summary(outcome: outcome, previous: previous, journalPath: journalPath, logPath: logPath))
+            if !closedTasks.isEmpty {
+                let names = closedTasks.joined(separator: ", ")
+                print("tasks passed: \(closedTasks.count) (\(names)) — diagnostics gone, journal closed them")
+                if journal.openTasks.count > 0 {
+                    print("tasks still open: \(journal.openTasks.count)")
+                }
+            }
             if verbose {
                 print(Self.listing(outcome.diagnostics))
             }
@@ -227,3 +239,216 @@ extension StrictMigrate {
         }
     }
 }
+
+// MARK: - slice
+
+extension StrictMigrate {
+    struct Slice: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "slice",
+            abstract: "Turn the last measurement into atomic tasks (one symbol group = one task).",
+            discussion: """
+                Reads the raw log saved by the last `strictmigrate measure`, clusters tracked \
+                diagnostics by (target, file, enclosing symbol), and replaces the queued backlog \
+                in the journal. Leaf targets come first — fix dependencies before dependents.
+                """
+        )
+
+        @OptionGroup var location: LocationOptions
+
+        @Option(name: .long, help: "Build log to slice from (default: .strictmigrate/last-build.log).")
+        var fromLog: String?
+
+        func run() throws {
+            let root = location.resolvedRoot
+            let journalPath = location.resolvedJournalPath
+            var journal = try JournalStore.load(at: journalPath)
+
+            let logPath = try Self.resolvedLogPath(fromLog, root: root)
+            let log = try String(contentsOfFile: logPath, encoding: .utf8)
+            let diagnostics = CompilerLogParser().parse(log, workingDirectory: root)
+            guard diagnostics.contains(where: { $0.category.isTracked }) else {
+                print("No tracked diagnostics in \(PathUtils.relativize(logPath, against: FileManager.default.currentDirectoryPath)) — nothing to slice.")
+                return
+            }
+
+            let warn: (String) -> Void = { message in
+                FileHandle.standardError.write(Data("warning: \(message)\n".utf8))
+            }
+            let targets = (try? PackageInspector.targets(packageRoot: root)) ?? []
+            if targets.isEmpty {
+                warn("target list unavailable; ordering falls back to diagnostics count and all tasks attribute to \(TargetMapper.unattributed)")
+            }
+            let mapper = TargetMapper(targets: targets)
+            let order = TargetPriority.leafFirstOrder(dependencies: PackageInspector.dependencyGraph(targets))
+
+            let fresh = TaskSlicer.slice(
+                diagnostics: diagnostics,
+                packageRoot: root,
+                mapper: mapper,
+                options: TaskSlicer.Options(targetOrder: order, firstTaskNumber: journal.nextTaskNumber)
+            )
+            let dropped = journal.replaceQueue(with: fresh)
+            try JournalStore.save(journal, to: journalPath)
+
+            print("Queued \(fresh.count) task\(fresh.count == 1 ? "" : "s") (dropped \(dropped) stale queued) — journal updated: \(journalPath)")
+            print("")
+            print("Next up:")
+            for task in fresh.prefix(5) {
+                print("  \(task.id)  \(task.target)  \(task.file)  [\(task.symbols.joined(separator: ", "))]  (\(task.diagnostics.joined(separator: ", ")))")
+            }
+            if fresh.count > 5 {
+                print("  … and \(fresh.count - 5) more — `strictmigrate tasks`")
+            }
+            print("")
+            print("Start with `strictmigrate next`.")
+        }
+
+        static func resolvedLogPath(_ fromLog: String?, root: String) throws -> String {
+            if let fromLog {
+                let path = fromLog.hasPrefix("/") ? fromLog : (root as NSString).appendingPathComponent(fromLog)
+                guard FileManager.default.fileExists(atPath: path) else {
+                    throw ValidationError("log not found: \(path)")
+                }
+                return path
+            }
+            let workDirectory = (root as NSString).appendingPathComponent(JournalStore.workDirectoryName)
+            let path = (workDirectory as NSString).appendingPathComponent("last-build.log")
+            guard FileManager.default.fileExists(atPath: path) else {
+                throw ValidationError("no build log at \(path) — run `strictmigrate measure` first (or pass --from-log)")
+            }
+            return path
+        }
+    }
+}
+
+// MARK: - next
+
+extension StrictMigrate {
+    struct Next: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Print the next task with a ready-to-paste prompt (manual mode).",
+            discussion: """
+                Marks the task `assigned` in the journal so repeated calls walk the queue; \
+                pass --peek to leave it queued. After fixing, run `strictmigrate measure` — \
+                it closes the task automatically when the diagnostics are gone.
+                """
+        )
+
+        @OptionGroup var location: LocationOptions
+
+        @Flag(name: .long, help: "Show the next task without marking it assigned.")
+        var peek = false
+
+        @Flag(name: .long, inversion: .prefixedNo, help: "Include task diagnostics resolved from the last build log (default when available).")
+        var withLocations = true
+
+        func run() throws {
+            let root = location.resolvedRoot
+            let journalPath = location.resolvedJournalPath
+            var journal = try JournalStore.load(at: journalPath)
+
+            guard var task = journal.nextQueuedTask else {
+                let open = journal.openTasks.count
+                if open > 0 {
+                    print("No queued tasks — \(open) task(s) assigned and awaiting a measure. Run `strictmigrate measure` or `strictmigrate tasks`.")
+                } else {
+                    print("Queue is empty. Run `strictmigrate measure` and `strictmigrate slice`.")
+                }
+                return
+            }
+
+            if !peek {
+                _ = journal.markAssigned(id: task.id)
+                try JournalStore.save(journal, to: journalPath)
+                task.status = .assigned
+            }
+
+            let level = journal.targets[task.target]?.level ?? .complete
+            var diagnostics: [ConcurrencyDiagnostic] = []
+            if withLocations {
+                diagnostics = Self.diagnosticsFor(task, root: root)
+            }
+            print(TaskPrompt.render(task: task, diagnostics: diagnostics, level: level), terminator: "")
+        }
+
+        /// Locates the task's diagnostics in the last build log, resolved to
+        /// the task's symbol so line drift between slicing and fixing is fine.
+        static func diagnosticsFor(_ task: TaskRecord, root: String) -> [ConcurrencyDiagnostic] {
+            let workDirectory = (root as NSString).appendingPathComponent(JournalStore.workDirectoryName)
+            let logPath = (workDirectory as NSString).appendingPathComponent("last-build.log")
+            guard let log = try? String(contentsOfFile: logPath, encoding: .utf8) else { return [] }
+
+            let all = CompilerLogParser().parse(log, workingDirectory: root)
+            guard !all.isEmpty else { return [] }
+            let keys = Set(task.symbols.map { SymbolKey(file: task.file, symbol: $0) })
+            let resolved = Journal.symbolKeys(for: all, packageRoot: root)
+            // Map diagnostics to their symbol identity, keep those in the task.
+            var symbolCache: [String: [SymbolRange]] = [:]
+            return all.filter { diagnostic in
+                guard diagnostic.category.isTracked else { return false }
+                if symbolCache[diagnostic.file] == nil {
+                    let absolute = (root as NSString).appendingPathComponent(diagnostic.file)
+                    symbolCache[diagnostic.file] = (try? String(contentsOfFile: absolute, encoding: .utf8))
+                        .map { SymbolLocator.symbols(in: $0) } ?? []
+                }
+                let symbol = SymbolLocator.symbolName(for: diagnostic, symbols: symbolCache[diagnostic.file] ?? [])
+                return keys.contains(SymbolKey(file: diagnostic.file, symbol: symbol)) && resolved.contains(SymbolKey(file: diagnostic.file, symbol: symbol))
+            }
+        }
+    }
+}
+
+// MARK: - tasks
+
+extension StrictMigrate {
+    struct Tasks: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "List tasks in the journal."
+        )
+
+        @OptionGroup var location: LocationOptions
+
+        @Option(name: .shortAndLong, help: "Only show tasks with this status: queued, assigned, passed, reverted, skipped.")
+        var status: TaskRecord.Status?
+
+        func run() throws {
+            let journal = try JournalStore.load(at: location.resolvedJournalPath)
+            let selected = journal.tasks.filter { status == nil || $0.status == status }
+
+            guard !selected.isEmpty else {
+                print(journal.tasks.isEmpty
+                    ? "No tasks. Run `strictmigrate measure` and `strictmigrate slice`."
+                    : "No tasks with status \(status!.rawValue).")
+                return
+            }
+
+            let idWidth = 7
+            let statusWidth = 9
+            let targetWidth = max(6, selected.map { $0.target.count }.max() ?? 6)
+            print(
+                pad("ID", idWidth), pad("Status", statusWidth), pad("Target", targetWidth),
+                "File / Symbols / Diagnostics"
+            )
+            for task in selected {
+                print(
+                    pad(task.id, idWidth), pad(task.status.rawValue, statusWidth), pad(task.target, targetWidth),
+                    "\(task.file)  [\(task.symbols.joined(separator: ", "))]  (\(task.diagnostics.joined(separator: ", ")))"
+                )
+            }
+            let counts = Dictionary(grouping: journal.tasks, by: \.status).mapValues(\.count)
+            let summary = TaskRecord.Status.allCases
+                .filter { counts[$0] != nil }
+                .map { "\($0.rawValue): \(counts[$0]!)" }
+                .joined(separator: ", ")
+            print("")
+            print("\(journal.tasks.count) tasks total (\(summary))")
+        }
+
+        private func pad(_ text: String, _ width: Int) -> String {
+            text.count >= width ? text : text + String(repeating: " ", count: width - text.count)
+        }
+    }
+}
+
+extension TaskRecord.Status: ExpressibleByArgument {}

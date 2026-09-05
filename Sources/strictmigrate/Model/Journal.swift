@@ -75,7 +75,7 @@ struct TaskRecord: Codable, Equatable {
     var verdict: Verdict?
     var attempts: Int
 
-    enum Status: String, Codable, Sendable {
+    enum Status: String, Codable, Sendable, CaseIterable {
         case queued
         case assigned
         case passed
