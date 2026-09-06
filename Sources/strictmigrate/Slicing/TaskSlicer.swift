@@ -210,14 +210,28 @@ extension Journal {
     }
 
     /// Attach the commit hash of a passed attempt (reconcile already closed
-    /// the status; this records the revert boundary).
+    /// the status; this records the revert boundary and optional test/TSan
+    /// verdicts from the same attempt).
     @discardableResult
-    mutating func recordCommit(taskID: String, commit: String, attempts: Int, notes: [String]) -> Bool {
+    mutating func recordCommit(
+        taskID: String,
+        commit: String,
+        attempts: Int,
+        notes: [String],
+        tests: String? = nil,
+        tsan: String? = nil
+    ) -> Bool {
         guard let index = tasks.firstIndex(where: { $0.id == taskID }) else { return false }
         tasks[index].commits.append(commit)
         tasks[index].attempts = attempts
         if !notes.isEmpty {
             tasks[index].notes = notes
+        }
+        if tests != nil || tsan != nil {
+            var verdict = tasks[index].verdict ?? TaskRecord.Verdict(build: "pass")
+            if let tests { verdict.tests = tests }
+            if let tsan { verdict.tsan = tsan }
+            tasks[index].verdict = verdict
         }
         return true
     }

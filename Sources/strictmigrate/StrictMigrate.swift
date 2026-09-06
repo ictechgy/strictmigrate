@@ -10,7 +10,7 @@ struct StrictMigrate: ParsableCommand {
             The compiler is the judge, the journal is the source of truth.
             v0.1 measures diagnostics per target and tracks progress — no agent required.
             """,
-        version: "0.3.0",
+        version: "0.4.0",
         subcommands: [
             Init.self, Measure.self, Status.self, Slice.self, Next.self, Tasks.self, Run.self, Skip.self,
         ]
@@ -482,7 +482,7 @@ extension StrictMigrate {
         @Option(name: .shortAndLong, help: "Strict concurrency level for verdict builds.")
         var level: StrictLevel = .complete
 
-        @Option(name: .long, help: "Agent backend: `claude` (claude-code CLI) or `command` (generic shell).")
+        @Option(name: .long, help: "Agent backend: `claude`, `codex`, `acp`, or `command` (generic shell).")
         var adapter: String = "claude"
 
         @Option(name: .long, help: """
@@ -492,8 +492,20 @@ extension StrictMigrate {
             """)
         var adapterCommand: String?
 
+        @Option(name: .long, help: "ACP agent command for --adapter acp, e.g. `claude-code-acp` or `node agent.js`.")
+        var acpCommand: String?
+
         @Option(name: .long, parsing: .unconditionalSingleValue, help: "Extra argument passed to the claude CLI (repeatable).")
         var claudeArg: [String] = []
+
+        @Option(name: .long, parsing: .unconditionalSingleValue, help: "Extra argument passed to the codex CLI (repeatable).")
+        var codexArg: [String] = []
+
+        @Flag(name: .long, help: "Run `swift test` as part of the verdict once the build passes; failures revert the attempt.")
+        var tests = false
+
+        @Flag(name: .long, help: "Run tests under ThreadSanitizer; races fail the attempt (implies --tests).")
+        var tsan = false
 
         func run() throws {
             let root = location.resolvedRoot
@@ -512,9 +524,14 @@ extension StrictMigrate {
             }
 
             let adapter = try AgentAdapterFactory.make(
-                kind: adapter, commandLine: adapterCommand, claudeArguments: claudeArg
+                kind: adapter,
+                commandLine: adapterCommand,
+                claudeArguments: claudeArg,
+                codexArguments: codexArg,
+                acpCommand: acpCommand
             )
             let workDirectory = try JournalStore.ensureWorkDirectory(in: root)
+            let mapper = (try? PackageInspector.targets(packageRoot: root)).map(TargetMapper.init)
             let executor = TaskExecutor(
                 adapter: adapter,
                 root: root,
@@ -525,8 +542,11 @@ extension StrictMigrate {
                 options: TaskExecutor.Options(
                     level: level,
                     buildTests: false,
-                    maxAttempts: maxAttempts
-                )
+                    maxAttempts: maxAttempts,
+                    runTests: tests || tsan,
+                    tsan: tsan
+                ),
+                mapper: mapper
             )
 
             let reports = try executor.execute(taskIDs: ids, journal: &journal) { line in

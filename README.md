@@ -4,7 +4,7 @@
 
 The official migration guide is a great 40-page document. strictmigrate turns those 40 pages into an executable task queue: the compiler counts the verdicts, the journal records where the migration stands, and the agent (or a human) holds the pen in between.
 
-**v0.3 — measure, journal, slice, dispatch, execute.** Agents hold the pen; the compiler judges; the journal remembers. claude-code ships as the first adapter, and any CLI agent works through the generic command adapter today.
+**v0.4 — agents on rails.** claude-code, Codex, and any ACP agent (the protocol Xcode 27 speaks) drive the same loop: dispatch, judge by compiler + tests, commit or revert, journal everything.
 
 ```console
 $ strictmigrate status
@@ -126,8 +126,23 @@ Any CLI agent works today via the generic adapter:
 
 ```console
 $ strictmigrate run --adapter command \
-    --adapter-command 'codex exec --full-auto "$(cat $STRICTMIGRATE_PROMPT_FILE)"'
+    --adapter-command 'my-agent --prompt-file $STRICTMIGRATE_PROMPT_FILE'
 ```
+
+Dedicated adapters: `--adapter codex` (Codex CLI, workspace-write sandbox) and `--adapter acp --acp-command 'claude-code-acp'` for any Agent Client Protocol agent — the JSON-RPC handshake, session, and prompt turn run over stdio, with streamed agent messages kept as the transcript.
+
+### Test and ThreadSanitizer verdicts
+
+Pass `--tests` (or `--tsan`) to make the suite part of the judge:
+
+```console
+$ strictmigrate run --task t-0007 --adapter claude --tsan
+   agent finished (exit 0); measuring …
+   running tests under ThreadSanitizer …
+   passed — committed 1f2a3b4, journal updated.
+```
+
+Tests run only once the *whole* package builds — results alongside a broken build elsewhere would be noise. Test failures or TSan race reports fail the attempt (edit reverted), and the journal records `verdict: { build: pass, tests: 47/47, tsan: clean }`. Regressions found outside the task's target are labeled with the target they broke (`DemoApp:Sources/DemoApp/main.swift [count] +1`), so cross-target fallout is visible at a glance.
 
 Prompts, transcripts, and build logs for every attempt are kept under `.strictmigrate/` for post-mortems.
 
@@ -219,8 +234,7 @@ Known ground roughness, handled explicitly: incremental builds don't re-emit cac
 
 ## Roadmap
 
-- **v0.4** — dedicated codex/ACP adapters (Xcode 27 agents), test-suite verdicts, ThreadSanitizer option, cross-target regression detection.
-- **v0.5 (undecided)** — Kotlin K2/JVM strict mode adapter.
+- **v0.5 (undecided)** — Kotlin K2/JVM strict mode adapter; verdict hooks for CI gates.
 
 ## Development
 

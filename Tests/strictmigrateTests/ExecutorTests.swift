@@ -367,6 +367,7 @@ final class GitWorkingCopyTests: XCTestCase {
         XCTAssertTrue(whitelist.allows(".omc/state/session.json"))
         XCTAssertTrue(whitelist.allows(".claude/settings.json"))
         XCTAssertTrue(whitelist.allows(".codex/history.jsonl"))
+        XCTAssertTrue(whitelist.allows(".serena/project.yml"))
         XCTAssertFalse(whitelist.allows("Sources/Core/A.swift"))
         XCTAssertFalse(whitelist.allows("strictmigrate.yaml.journal.bak"))
         XCTAssertFalse(whitelist.allows("CLAUDE.md"))

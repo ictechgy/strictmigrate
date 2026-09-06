@@ -17,7 +17,8 @@ enum VerdictCalculator {
         before: [ConcurrencyDiagnostic],
         after: [ConcurrencyDiagnostic],
         task: TaskRecord,
-        packageRoot: String
+        packageRoot: String,
+        fileTarget: ((String) -> String?)? = nil
     ) -> AttemptVerdict {
         let taskKeys = Set(task.symbols.map { SymbolKey(file: task.file, symbol: $0) })
         let beforeCounts = symbolCounts(before, packageRoot: packageRoot)
@@ -28,7 +29,13 @@ enum VerdictCalculator {
         for (key, afterCount) in afterCounts where !taskKeys.contains(key) {
             let beforeCount = beforeCounts[key] ?? 0
             if afterCount > beforeCount {
-                regressions.append("\(key.file) [\(key.symbol)] +\(afterCount - beforeCount)")
+                let delta = afterCount - beforeCount
+                if let target = fileTarget?(key.file), target != task.target {
+                    // Cross-target regression: the fix in one target broke another.
+                    regressions.append("\(target):\(key.file) [\(key.symbol)] +\(delta)")
+                } else {
+                    regressions.append("\(key.file) [\(key.symbol)] +\(delta)")
+                }
             }
         }
 
@@ -82,6 +89,10 @@ struct TaskExecutor {
         var level: StrictLevel = .complete
         var buildTests = false
         var maxAttempts: Int = 2
+        /// Run `swift test` as part of the verdict (once the build succeeds).
+        var runTests = false
+        /// Run tests under ThreadSanitizer; races fail the attempt.
+        var tsan = false
     }
 
     let adapter: AgentAdapter
@@ -91,6 +102,8 @@ struct TaskExecutor {
     let journalPath: String
     let workDirectory: String
     let options: Options
+    /// Optional target attribution for cross-target regression labels.
+    var mapper: TargetMapper? = nil
 
     /// Executes tasks in the given order, updating the journal in place and
     /// writing prompts/transcripts/logs under the work directory.
@@ -203,49 +216,76 @@ struct TaskExecutor {
                     before: preDiagnostics!,
                     after: post.diagnostics,
                     task: task,
-                    packageRoot: root
+                    packageRoot: root,
+                    fileTarget: mapper.map { targetMapper in { targetMapper.target(forFile: $0) } }
                 )
 
-                if verdict.passed {
-                    let commit = try git.commit(
-                        paths: [task.file],
-                        message: "strictmigrate(\(id)): \(task.target) \(task.file) \(task.symbols.joined(separator: ","))"
-                    )
+                // Test / ThreadSanitizer stage — only when the whole package
+                // builds; results alongside a broken build elsewhere are noise.
+                var tests: TestRunOutcome?
+                var attemptFailure: String?
+                if verdict.passed, options.runTests || options.tsan {
+                    if post.buildExitCode == 0 {
+                        log("   running tests\(options.tsan ? " under ThreadSanitizer" : "") …")
+                        let outcome = try TestRunner.run(packageRoot: root, tsan: options.tsan)
+                        if outcome.passed {
+                            tests = outcome
+                        } else if outcome.tsanRaces > 0 {
+                            attemptFailure = "ThreadSanitizer reported \(outcome.tsanRaces) race(s)"
+                        } else {
+                            attemptFailure = "test suite failed (\(outcome.summaryLabel))"
+                        }
+                    } else {
+                        log("   tests skipped — the package still fails to build elsewhere")
+                    }
+                } else if !verdict.passed {
+                    attemptFailure = verdict.taskClean
+                        ? "new diagnostics appeared elsewhere: \(verdict.regressionsElsewhere.joined(separator: ", "))"
+                        : "task diagnostics still present — fix was insufficient"
+                }
+
+                if let attemptFailure {
+                    try git.discard(paths: changed.map(\.path))
+                    failureNote = attemptFailure
                     attempts.append(
                         AttemptReport(
                             number: attempt, agentExitCode: outcome.exitCode,
-                            verdict: verdict, note: "passed"
+                            verdict: verdict, note: failureNote
                         )
                     )
-                    journal.applyMeasurement(at: Date(), level: options.level, results: post.perTarget)
-                    _ = journal.reconcileTasks(
-                        against: post.diagnostics, packageRoot: root, buildExitCode: post.buildExitCode
-                    )
-                    _ = journal.recordCommit(
-                        taskID: id, commit: commit, attempts: attempt,
-                        notes: attempts.map(\.note).filter { $0 != "passed" }
-                    )
-                    try JournalStore.save(journal, to: journalPath)
-                    preDiagnostics = post.diagnostics
-                    log("   passed — committed \(commit), journal updated.")
-                    reports.append(
-                        TaskExecutionReport(taskID: id, attempts: attempts, finalStatus: .passed, commit: commit)
-                    )
-                    passed = true
-                    break
+                    log("   \(failureNote); reverted.")
+                    continue
                 }
 
-                try git.discard(paths: changed.map(\.path))
-                failureNote = verdict.taskClean
-                    ? "new diagnostics appeared elsewhere: \(verdict.regressionsElsewhere.joined(separator: ", "))"
-                    : "task diagnostics still present — fix was insufficient"
+                let commit = try git.commit(
+                    paths: [task.file],
+                    message: "strictmigrate(\(id)): \(task.target) \(task.file) \(task.symbols.joined(separator: ","))"
+                )
                 attempts.append(
                     AttemptReport(
                         number: attempt, agentExitCode: outcome.exitCode,
-                        verdict: verdict, note: failureNote
+                        verdict: verdict, note: "passed"
                     )
                 )
-                log("   \(failureNote); reverted.")
+                journal.applyMeasurement(at: Date(), level: options.level, results: post.perTarget)
+                _ = journal.reconcileTasks(
+                    against: post.diagnostics, packageRoot: root, buildExitCode: post.buildExitCode
+                )
+                _ = journal.recordCommit(
+                    taskID: id, commit: commit, attempts: attempt,
+                    notes: attempts.map(\.note).filter { $0 != "passed" },
+                    tests: tests?.summaryLabel,
+                    tsan: options.tsan && post.buildExitCode == 0
+                        ? (tests?.tsanRaces == 0 ? "clean" : "dirty") : nil
+                )
+                try JournalStore.save(journal, to: journalPath)
+                preDiagnostics = post.diagnostics
+                log("   passed — committed \(commit), journal updated.")
+                reports.append(
+                    TaskExecutionReport(taskID: id, attempts: attempts, finalStatus: .passed, commit: commit)
+                )
+                passed = true
+                break
             }
 
             if !passed {

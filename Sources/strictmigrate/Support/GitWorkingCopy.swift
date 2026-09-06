@@ -164,8 +164,10 @@ struct PathWhitelist: Sendable {
             ".swiftpm/",
             ".claude/",
             ".codex/",
-            ".omc/",
             ".cursor/",
+            ".gemini/",
+            ".omc/",
+            ".serena/",
         ]
         self.exactPaths = Set([journalPath])
     }

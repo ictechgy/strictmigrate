@@ -69,6 +69,28 @@ struct CommandAdapter: AgentAdapter {
     }
 }
 
+/// OpenAI Codex CLI, non-interactive: `codex exec -s workspace-write <prompt>`
+/// (workspace-write sandbox; `exec` never prompts). As with claude-code, the
+/// agent edits; building and judging stay with the executor.
+struct CodexAdapter: AgentAdapter {
+    var name: String { "codex" }
+    /// Extra arguments appended verbatim (repeatable `--codex-arg`).
+    var extraArguments: [String] = []
+
+    func run(_ invocation: AgentInvocation) throws -> AgentRunOutcome {
+        let result = try Shell.run(
+            "codex",
+            arguments: Self.arguments(prompt: invocation.prompt, extraArguments: extraArguments),
+            currentDirectory: invocation.workingDirectory
+        )
+        return AgentRunOutcome(exitCode: result.exitCode, transcript: result.combinedText)
+    }
+
+    static func arguments(prompt: String, extraArguments: [String]) -> [String] {
+        ["exec", "-s", "workspace-write", "--color", "never", prompt] + extraArguments
+    }
+}
+
 enum AgentAdapterFactory {
     enum FactoryError: Error, CustomStringConvertible {
         case unknownAdapter(String)
@@ -77,17 +99,28 @@ enum AgentAdapterFactory {
         var description: String {
             switch self {
             case .unknownAdapter(let name):
-                return "unknown adapter `\(name)` — expected `claude` or `command`"
+                return "unknown adapter `\(name)` — expected `claude`, `codex`, `acp`, or `command`"
             case .missingCommand:
-                return "--adapter command requires --adapter-command '<shell command>'"
+                return "this adapter requires a --adapter-command '<shell command>' (or --acp-command)"
             }
         }
     }
 
-    static func make(kind: String, commandLine: String?, claudeArguments: [String]) throws -> AgentAdapter {
+    static func make(
+        kind: String,
+        commandLine: String?,
+        claudeArguments: [String] = [],
+        codexArguments: [String] = [],
+        acpCommand: String? = nil
+    ) throws -> AgentAdapter {
         switch kind {
         case "claude":
             return ClaudeCodeAdapter(extraArguments: claudeArguments)
+        case "codex":
+            return CodexAdapter(extraArguments: codexArguments)
+        case "acp":
+            guard let acpCommand, !acpCommand.isEmpty else { throw FactoryError.missingCommand }
+            return ACPAdapter(commandLine: acpCommand)
         case "command":
             guard let commandLine, !commandLine.isEmpty else { throw FactoryError.missingCommand }
             return CommandAdapter(commandLine: commandLine)
