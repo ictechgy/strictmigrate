@@ -4,7 +4,7 @@
 
 The official migration guide is a great 40-page document. strictmigrate turns those 40 pages into an executable task queue: the compiler counts the verdicts, the journal records where the migration stands, and the agent (or a human) holds the pen in between.
 
-**v0.4 — agents on rails.** claude-code, Codex, and any ACP agent (the protocol Xcode 27 speaks) drive the same loop: dispatch, judge by compiler + tests, commit or revert, journal everything.
+**v0.5 — across the KMP boundary.** Swift-side diagnostics, Kotlin-side fixes: routing, symbol slicing, and edit permissions now span the language boundary of a Kotlin Multiplatform project.
 
 ```console
 $ strictmigrate status
@@ -131,6 +131,16 @@ $ strictmigrate run --adapter command \
 
 Dedicated adapters: `--adapter codex` (Codex CLI, workspace-write sandbox) and `--adapter acp --acp-command 'claude-code-acp'` for any Agent Client Protocol agent — the JSON-RPC handshake, session, and prompt turn run over stdio, with streamed agent messages kept as the transcript.
 
+### KMP boundary (v0.5)
+
+Kotlin Multiplatform teams hit Swift 6 strict concurrency from the iOS side: the app's build flags every Kotlin-exported non-Sendable type at each crossing, while the fix usually lives in the shared Kotlin module. strictmigrate now works across that boundary — measurement stays on the Swift side (the compiler that judges), while attribution, slicing, and edit permissions extend into the Kotlin source:
+
+- `.kt` files resolve to their Kotlin declarations (fun/class/object/interface/val, raw strings, nested comments) for symbol-level tasks.
+- Kotlin files attribute to `module/sourceSet` targets via Gradle directory conventions — no Gradle run needed — and discovered source sets appear in the journal even at zero diagnostics.
+- **Boundary routing**: when a task's Swift diagnostics name a non-Sendable type that is declared in Kotlin, the task prompt points at the Kotlin declaration ("prefer fixing it there") and the executor's scope check allows that file — deterministically, from the same function on both ends. One task still means one commit, now possibly spanning both languages.
+
+A runnable version of this scenario lives in [`Examples/KmpBoundary`](Examples/KmpBoundary): a Swift app, a shared Kotlin module, and a boundary violation whose fix touches both sides. The pure-Kotlin strict-mode adapter remains deferred until the Kotlin compiler grows one ([KT-72087](https://youtrack.jetbrains.com/projects/KT/issues/KT-72087)).
+
 ### Test and ThreadSanitizer verdicts
 
 Pass `--tests` (or `--tsan`) to make the suite part of the judge:
@@ -234,7 +244,7 @@ Known ground roughness, handled explicitly: incremental builds don't re-emit cac
 
 ## Roadmap
 
-- **v0.5 (undecided)** — Kotlin K2/JVM strict mode adapter; verdict hooks for CI gates.
+- **v0.6 (undecided)** — pure-Kotlin strict-mode adapter, deferred until the Kotlin compiler grows compiler-enforced data-race checking ([KT-72087](https://youtrack.jetbrains.com/projects/KT/issues/KT-72087)); verdict hooks for CI gates.
 
 ## Development
 

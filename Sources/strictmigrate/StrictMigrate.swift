@@ -10,7 +10,7 @@ struct StrictMigrate: ParsableCommand {
             The compiler is the judge, the journal is the source of truth.
             v0.1 measures diagnostics per target and tracks progress — no agent required.
             """,
-        version: "0.4.0",
+        version: "0.5.0",
         subcommands: [
             Init.self, Measure.self, Status.self, Slice.self, Next.self, Tasks.self, Run.self, Skip.self,
         ]
@@ -279,9 +279,9 @@ extension StrictMigrate {
             }
             let targets = (try? PackageInspector.targets(packageRoot: root)) ?? []
             if targets.isEmpty {
-                warn("target list unavailable; ordering falls back to diagnostics count and all tasks attribute to \(TargetMapper.unattributed)")
+                warn("target list unavailable; ordering falls back to diagnostics count and SPM targets attribute to \(TargetMapper.unattributed)")
             }
-            let mapper = TargetMapper(targets: targets)
+            let mapper = HybridTargetMapper(spm: TargetMapper(targets: targets), repoRoot: root)
             let order = TargetPriority.leafFirstOrder(dependencies: PackageInspector.dependencyGraph(targets))
 
             let fresh = TaskSlicer.slice(
@@ -371,7 +371,13 @@ extension StrictMigrate {
             if withLocations {
                 diagnostics = Self.diagnosticsFor(task, root: root)
             }
-            print(TaskPrompt.render(task: task, diagnostics: diagnostics, level: level), terminator: "")
+            let routed = TaskRouter.kotlinFixTargets(diagnostics: diagnostics, task: task, repoRoot: root)
+            print(
+                TaskPrompt.render(
+                    task: task, diagnostics: diagnostics, level: level, kotlinFixTargets: routed
+                ),
+                terminator: ""
+            )
         }
 
         /// Locates the task's diagnostics in the last build log, resolved to
@@ -392,7 +398,7 @@ extension StrictMigrate {
                 if symbolCache[diagnostic.file] == nil {
                     let absolute = (root as NSString).appendingPathComponent(diagnostic.file)
                     symbolCache[diagnostic.file] = (try? String(contentsOfFile: absolute, encoding: .utf8))
-                        .map { SymbolLocator.symbols(in: $0) } ?? []
+                        .map { SymbolLocator.symbols(in: $0, language: SourceLanguage(path: diagnostic.file)) } ?? []
                 }
                 let symbol = SymbolLocator.symbolName(for: diagnostic, symbols: symbolCache[diagnostic.file] ?? [])
                 return keys.contains(SymbolKey(file: diagnostic.file, symbol: symbol)) && resolved.contains(SymbolKey(file: diagnostic.file, symbol: symbol))
@@ -531,7 +537,7 @@ extension StrictMigrate {
                 acpCommand: acpCommand
             )
             let workDirectory = try JournalStore.ensureWorkDirectory(in: root)
-            let mapper = (try? PackageInspector.targets(packageRoot: root)).map(TargetMapper.init)
+            let spmTargets = (try? PackageInspector.targets(packageRoot: root)) ?? []
             let executor = TaskExecutor(
                 adapter: adapter,
                 root: root,
@@ -546,7 +552,7 @@ extension StrictMigrate {
                     runTests: tests || tsan,
                     tsan: tsan
                 ),
-                mapper: mapper
+                mapper: HybridTargetMapper(spm: TargetMapper(targets: spmTargets), repoRoot: root)
             )
 
             let reports = try executor.execute(taskIDs: ids, journal: &journal) { line in

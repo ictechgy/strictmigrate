@@ -8,7 +8,8 @@ enum TaskPrompt {
     static func render(
         task: TaskRecord,
         diagnostics: [ConcurrencyDiagnostic],
-        level: StrictLevel
+        level: StrictLevel,
+        kotlinFixTargets: [String] = []
     ) -> String {
         var out: [String] = []
         out.append("Task \(task.id) — target \(task.target)")
@@ -30,6 +31,13 @@ enum TaskPrompt {
 
         out.append("Scope rules (hard boundaries):")
         out.append("1. Modify ONLY `\(task.file)`, ONLY the symbol(s) above.")
+        if !kotlinFixTargets.isEmpty {
+            out.append("   KMP boundary: the offending type is declared in Kotlin. You may ALSO edit:")
+            for path in kotlinFixTargets {
+                out.append("   - \(path)")
+            }
+            out.append("   Prefer fixing the Kotlin declaration (immutability, @ThreadSafe, removing shared mutable state) over patching the Swift call site.")
+        }
         out.append("2. Do not touch other files or symbols, even if you see problems there — they belong to other tasks.")
         out.append("3. Do not silence diagnostics with `@unchecked Sendable`, `nonisolated(unsafe)`, or force-unwrapping unless the semantics genuinely allow it; prefer real isolation design.")
         out.append("4. Success = these diagnostics disappear and no new diagnostics appear anywhere in the package.")

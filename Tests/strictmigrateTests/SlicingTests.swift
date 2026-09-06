@@ -153,10 +153,10 @@ final class TaskSlicerTests: XCTestCase {
         defer { try? FileManager.default.removeItem(atPath: root) }
         try writeSources(root: root)
 
-        let mapper = TargetMapper(targets: [
+        let mapper = HybridTargetMapper(spm: TargetMapper(targets: [
             PackageTarget(name: "Core", path: "Sources/Core", dependencies: []),
             PackageTarget(name: "App", path: "Sources/App", dependencies: ["Core"]),
-        ])
+        ]), repoRoot: root)
         let diagnostics = [
             diagnostic("Sources/Core/Thing.swift", 2, .sendable, message: "type 'Thing' does not conform to the 'Sendable' protocol"),
             diagnostic("Sources/Core/Thing.swift", 4, .isolation, message: "actor-isolated property 'state' can not be mutated"),

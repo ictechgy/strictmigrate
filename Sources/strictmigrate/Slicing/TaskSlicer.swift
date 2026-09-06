@@ -18,7 +18,7 @@ enum TaskSlicer {
     static func slice(
         diagnostics: [ConcurrencyDiagnostic],
         packageRoot: String,
-        mapper: TargetMapper,
+        mapper: HybridTargetMapper,
         options: Options
     ) -> [TaskRecord] {
         // (target, file, symbol) → diagnostics
@@ -30,7 +30,7 @@ enum TaskSlicer {
             if symbolCache[diagnostic.file] == nil {
                 let absolute = (packageRoot as NSString).appendingPathComponent(diagnostic.file)
                 symbolCache[diagnostic.file] = (try? String(contentsOfFile: absolute, encoding: .utf8))
-                    .map { SymbolLocator.symbols(in: $0) } ?? []
+                    .map { SymbolLocator.symbols(in: $0, language: SourceLanguage(path: diagnostic.file)) } ?? []
             }
             let symbol = SymbolLocator.symbolName(for: diagnostic, symbols: symbolCache[diagnostic.file] ?? [])
             clusters[ClusterKey(target: target, file: diagnostic.file, symbol: symbol), default: []].append(diagnostic)
@@ -110,7 +110,8 @@ struct SymbolKey: Hashable, Sendable {
 
 extension Journal {
     /// Resolves tracked diagnostics to their (file, symbol) identities.
-    /// Source files are read (and symbol sets cached) per call.
+    /// Source files are read (and symbol sets cached) per call; Kotlin files
+    /// resolve with the Kotlin lexicon.
     static func symbolKeys(
         for diagnostics: [ConcurrencyDiagnostic],
         packageRoot: String
@@ -121,7 +122,7 @@ extension Journal {
             if symbolCache[diagnostic.file] == nil {
                 let absolute = (packageRoot as NSString).appendingPathComponent(diagnostic.file)
                 symbolCache[diagnostic.file] = (try? String(contentsOfFile: absolute, encoding: .utf8))
-                    .map { SymbolLocator.symbols(in: $0) } ?? []
+                    .map { SymbolLocator.symbols(in: $0, language: SourceLanguage(path: diagnostic.file)) } ?? []
             }
             let symbol = SymbolLocator.symbolName(for: diagnostic, symbols: symbolCache[diagnostic.file] ?? [])
             keys.insert(SymbolKey(file: diagnostic.file, symbol: symbol))

@@ -52,7 +52,7 @@ enum VerdictCalculator {
             if cache[diagnostic.file] == nil {
                 let absolute = (packageRoot as NSString).appendingPathComponent(diagnostic.file)
                 cache[diagnostic.file] = (try? String(contentsOfFile: absolute, encoding: .utf8))
-                    .map { SymbolLocator.symbols(in: $0) } ?? []
+                    .map { SymbolLocator.symbols(in: $0, language: SourceLanguage(path: diagnostic.file)) } ?? []
             }
             let symbol = SymbolLocator.symbolName(for: diagnostic, symbols: cache[diagnostic.file] ?? [])
             counts[SymbolKey(file: diagnostic.file, symbol: symbol), default: 0] += 1
@@ -103,7 +103,7 @@ struct TaskExecutor {
     let workDirectory: String
     let options: Options
     /// Optional target attribution for cross-target regression labels.
-    var mapper: TargetMapper? = nil
+    var mapper: HybridTargetMapper? = nil
 
     /// Executes tasks in the given order, updating the journal in place and
     /// writing prompts/transcripts/logs under the work directory.
@@ -158,10 +158,24 @@ struct TaskExecutor {
                 _ = journal.markAssigned(id: id)
                 try JournalStore.save(journal, to: journalPath)
 
+                // KMP boundary routing: non-Sendable types named by this task's
+                // diagnostics may be declared in Kotlin — same deterministic
+                // function widens the allowed edit scope.
+                let allowedFiles: Set<String> = {
+                    var files: Set<String> = [task.file]
+                    for path in TaskRouter.kotlinFixTargets(
+                        diagnostics: preDiagnostics!, task: task, repoRoot: root
+                    ) {
+                        files.insert(path)
+                    }
+                    return files
+                }()
+
                 var prompt = TaskPrompt.render(
                     task: task,
                     diagnostics: preDiagnostics!.filter { $0.file == task.file },
-                    level: options.level
+                    level: options.level,
+                    kotlinFixTargets: allowedFiles.sorted().filter { $0 != task.file }
                 )
                 if attempt > 1 {
                     prompt +=
@@ -184,9 +198,10 @@ struct TaskExecutor {
                     .appendingPathComponent("transcript-\(id)-a\(attempt).log")
                 try outcome.transcript.write(toFile: transcriptPath, atomically: true, encoding: .utf8)
 
-                // Scope check: the agent may edit exactly the task's file.
+                // Scope check: the agent may edit exactly the task's file, plus
+                // any Kotlin file the boundary routing identified.
                 let changed = (try git.changes()).filter { !whitelist.allows($0.path) }
-                let violations = changed.map(\.path).filter { $0 != task.file }
+                let violations = changed.map(\.path).filter { !allowedFiles.contains($0) }
                 if !violations.isEmpty {
                     try git.discard(paths: changed.map(\.path))
                     failureNote =
@@ -257,10 +272,17 @@ struct TaskExecutor {
                     continue
                 }
 
-                let commit = try git.commit(
-                    paths: [task.file],
-                    message: "strictmigrate(\(id)): \(task.target) \(task.file) \(task.symbols.joined(separator: ","))"
-                )
+                // Commit exactly what the agent changed within the allowed
+                // scope (task file + routed Kotlin files) — one task, one
+                // commit, possibly spanning the language boundary.
+                let commitPaths = changed.map(\.path).filter { allowedFiles.contains($0) }
+                var commitHash: String?
+                if !commitPaths.isEmpty {
+                    commitHash = try git.commit(
+                        paths: commitPaths,
+                        message: "strictmigrate(\(id)): \(task.target) \(task.file) \(task.symbols.joined(separator: ","))"
+                    )
+                }
                 attempts.append(
                     AttemptReport(
                         number: attempt, agentExitCode: outcome.exitCode,
@@ -271,18 +293,24 @@ struct TaskExecutor {
                 _ = journal.reconcileTasks(
                     against: post.diagnostics, packageRoot: root, buildExitCode: post.buildExitCode
                 )
-                _ = journal.recordCommit(
-                    taskID: id, commit: commit, attempts: attempt,
-                    notes: attempts.map(\.note).filter { $0 != "passed" },
-                    tests: tests?.summaryLabel,
-                    tsan: options.tsan && post.buildExitCode == 0
-                        ? (tests?.tsanRaces == 0 ? "clean" : "dirty") : nil
-                )
+                if let commitHash {
+                    _ = journal.recordCommit(
+                        taskID: id, commit: commitHash, attempts: attempt,
+                        notes: attempts.map(\.note).filter { $0 != "passed" },
+                        tests: tests?.summaryLabel,
+                        tsan: options.tsan && post.buildExitCode == 0
+                            ? (tests?.tsanRaces == 0 ? "clean" : "dirty") : nil
+                    )
+                }
                 try JournalStore.save(journal, to: journalPath)
                 preDiagnostics = post.diagnostics
-                log("   passed — committed \(commit), journal updated.")
+                if let commitHash {
+                    log("   passed — committed \(commitHash) (\(commitPaths.count) file\(commitPaths.count == 1 ? "" : "s")), journal updated.")
+                } else {
+                    log("   passed without edits — symbols were already clean; journal updated.")
+                }
                 reports.append(
-                    TaskExecutionReport(taskID: id, attempts: attempts, finalStatus: .passed, commit: commit)
+                    TaskExecutionReport(taskID: id, attempts: attempts, finalStatus: .passed, commit: commitHash)
                 )
                 passed = true
                 break

@@ -13,7 +13,27 @@ struct SymbolRange: Equatable, Sendable {
     var display: String { "\(kind) \(name)" }
 }
 
-/// Locates the declaration enclosing a diagnostic's line.
+/// Source language of a file, by extension. Kotlin matters at KMP boundaries:
+/// Swift-side strict-concurrency diagnostics name Kotlin-exported types whose
+/// fixes live in `.kt` declarations.
+enum SourceLanguage: Sendable, Equatable {
+    case swift
+    case kotlin
+    case unknown
+
+    init(path: String) {
+        if path.hasSuffix(".swift") {
+            self = .swift
+        } else if path.hasSuffix(".kt") || path.hasSuffix(".kts") {
+            self = .kotlin
+        } else {
+            self = .unknown
+        }
+    }
+}
+
+/// Locates the declaration enclosing a diagnostic's line, in Swift or Kotlin
+/// source.
 ///
 /// Line-based heuristic: tracks brace depth (comments and string literals
 /// excluded), confirms a pending declaration at its opening brace, and closes
@@ -21,34 +41,78 @@ struct SymbolRange: Equatable, Sendable {
 /// records names, not offsets, so line drift between slicing and fixing is
 /// tolerated.
 enum SymbolLocator {
-    private static let declarationKeywords: Set<String> = [
-        "func", "var", "let", "class", "struct", "enum", "actor",
-        "extension", "protocol", "typealias", "associatedtype",
-        "subscript", "init", "deinit",
-    ]
-    private static let modifierKeywords: Set<String> = [
-        "public", "private", "internal", "fileprivate", "open", "final",
-        "static", "class", "override", "required", "convenience", "lazy",
-        "weak", "unowned", "mutating", "nonmutating", "nonisolated",
-        "isolated", "indirect", "dynamic", "optional", "reasync",
-        "distributed", "borrowing", "consuming", "set",
-    ]
+    private struct Lexicon: Sendable {
+        var declarations: Set<String>
+        var modifiers: Set<String>
+        var namelessDeclarations: Set<String>
+        var isKotlin: Bool
 
-    static func symbols(in source: String) -> [SymbolRange] {
+        static let swift = Lexicon(
+            declarations: [
+                "func", "var", "let", "class", "struct", "enum", "actor",
+                "extension", "protocol", "typealias", "associatedtype",
+                "subscript", "init", "deinit",
+            ],
+            modifiers: [
+                "public", "private", "internal", "fileprivate", "open", "final",
+                "static", "class", "override", "required", "convenience", "lazy",
+                "weak", "unowned", "mutating", "nonmutating", "nonisolated",
+                "isolated", "indirect", "dynamic", "optional", "reasync",
+                "distributed", "borrowing", "consuming", "set",
+            ],
+            namelessDeclarations: ["init", "deinit", "subscript"],
+            isKotlin: false
+        )
+
+        // Kotlin: `enum class`/`value class`/`data class` arrive via the
+        // modifier set; `get`/`set` property accessors nest inside the
+        // property's symbol.
+        static let kotlin = Lexicon(
+            declarations: [
+                "fun", "val", "var", "class", "object", "interface",
+                "typealias", "constructor", "init", "get", "set",
+            ],
+            modifiers: [
+                "private", "protected", "internal", "public", "expect", "actual",
+                "final", "open", "abstract", "sealed", "const", "external",
+                "override", "lateinit", "tailrec", "vararg", "suspend", "inner",
+                "enum", "value", "data", "annotation", "companion", "inline",
+                "infix", "operator", "reified", "crossinline", "noinline",
+                "out", "in", "dynamic", "mutable",
+            ],
+            namelessDeclarations: ["constructor", "init", "get", "set"],
+            isKotlin: true
+        )
+    }
+
+    static func symbols(in source: String, language: SourceLanguage = .swift) -> [SymbolRange] {
+        symbols(in: source, lexicon: language == .kotlin ? .kotlin : .swift)
+    }
+
+    private static func symbols(in source: String, lexicon: Lexicon) -> [SymbolRange] {
         var results: [SymbolRange] = []
         var openDeclarations: [(name: String, kind: String, startLine: Int, depth: Int)] = []
         var pending: (name: String, kind: String, line: Int)?
         var depth = 0
-        var inBlockComment = false
+        var stripper = LineStripper()
 
         let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
         for (index, rawLine) in lines.enumerated() {
             let lineNumber = index + 1
-            let (code, stillInBlockComment) = stripComments(String(rawLine), inBlockComment: inBlockComment)
-            inBlockComment = stillInBlockComment
+            let code = stripper.strip(String(rawLine), kotlin: lexicon.isKotlin)
             if code.trimmingCharacters(in: .whitespaces).isEmpty { continue }
 
-            if pending == nil, let declaration = firstDeclaration(in: code, depth: depth) {
+            if let declaration = firstDeclaration(in: code, depth: depth, lexicon: lexicon) {
+                if let pending {
+                    // A new declaration while one is still pending means the
+                    // pending one was a single-liner we failed to recognize
+                    // (e.g. Kotlin expression bodies ending in a string) —
+                    // close it on its own line and take over, so it cannot
+                    // steal the next declaration's brace.
+                    results.append(
+                        SymbolRange(name: pending.name, kind: pending.kind, startLine: pending.line, endLine: pending.line)
+                    )
+                }
                 pending = (declaration.name, declaration.kind, lineNumber)
             }
 
@@ -78,14 +142,12 @@ enum SymbolLocator {
             }
             if let declaration = pending, !lineOpenedBrace {
                 // Brace-less declarations close on their own line. Stored
-                // properties and typealiases never open a brace; other kinds
-                // (func/class/…) without a brace here are mid-multi-line-signature
-                // and stay pending until their brace arrives.
-                let selfClosing = code.hasSuffix(";")
-                    || declaration.kind == "var"
-                    || declaration.kind == "let"
-                    || declaration.kind == "typealias"
-                    || declaration.kind == "associatedtype"
+                // properties and typealiases never open a brace; Kotlin
+                // function signatures without bodies (`expect fun`, interface
+                // members) end at the parameter list. Other kinds without a
+                // brace here are mid-multi-line-signature and stay pending.
+                let selfClosing = code.hasSuffix(";") || code.hasSuffix(")")
+                    || ["var", "let", "val", "typealias"].contains(declaration.kind)
                 if selfClosing {
                     results.append(
                         SymbolRange(name: declaration.name, kind: declaration.kind, startLine: declaration.line, endLine: lineNumber)
@@ -120,37 +182,38 @@ enum SymbolLocator {
 
     // MARK: - Tokenizing
 
-    private static func firstDeclaration(in line: String, depth: Int) -> (name: String, kind: String)? {
+    private static func firstDeclaration(in line: String, depth: Int, lexicon: Lexicon) -> (name: String, kind: String)? {
         var keyword: String?
         let words = tokens(line)
         for (index, token) in words.enumerated() {
             if token.hasPrefix("@") { continue }
             if let keyword {
                 // First token after the declaration keyword is the name.
-                if keyword == "init" || keyword == "deinit" || keyword == "subscript" {
+                if lexicon.namelessDeclarations.contains(keyword) {
                     return (keyword, keyword)
                 }
                 return (token, keyword)
             }
-            // `class` is both a declaration keyword and a modifier (`class func`);
-            // the next token decides.
-            if token == "class" {
+            // Swift: `class` is both a declaration keyword and a modifier
+            // (`class func`); the next token decides.
+            if token == "class", !lexicon.isKotlin {
                 let next = index + 1 < words.count ? words[index + 1] : ""
                 if ["func", "var", "let"].contains(next) { continue }
                 keyword = token
                 continue
             }
-            if modifierKeywords.contains(token) { continue }
-            if declarationKeywords.contains(token) {
-                // Local var/let inside a function body is not a useful task boundary.
-                if (token == "var" || token == "let") && depth >= 2 { return nil }
+            if lexicon.modifiers.contains(token) { continue }
+            if lexicon.declarations.contains(token) {
+                // Local var/let/val inside a function body is not a useful
+                // task boundary (Swift depth ≥ 2; Kotlin ditto).
+                if ["var", "let", "val"].contains(token), depth >= 2 { return nil }
                 keyword = token
                 continue
             }
             return nil // some other statement, not a declaration line
         }
-        // `init()`, `deinit`, `subscript(x)` carry no name token.
-        if let keyword, ["init", "deinit", "subscript"].contains(keyword) {
+        // `init()`, accessors, `constructor(…)` carry no name token.
+        if let keyword, lexicon.namelessDeclarations.contains(keyword) {
             return (keyword, keyword)
         }
         return nil
@@ -159,24 +222,49 @@ enum SymbolLocator {
     private static func tokens(_ line: String) -> [String] {
         line.split { !$0.isLetter && $0 != "_" }.map(String.init)
     }
+}
 
-    /// Removes `//` comments and blanks out string literals / `/* */` bodies,
-    /// leaving brace structure intact for counting.
-    private static func stripComments(_ line: String, inBlockComment: Bool) -> (String, Bool) {
+/// Removes `//`/`/* */` comments and blanks out string literals, leaving brace
+/// structure intact for counting. Carries multi-line block-comment and raw-
+/// string state across lines; Kotlin mode adds nested block comments,
+/// `"""` raw strings, and single-quoted character literals.
+private struct LineStripper {
+    private var blockCommentDepth = 0
+    private var inRawString = false
+
+    mutating func strip(_ line: String, kotlin: Bool) -> String {
         var output = ""
-        var inBlockComment = inBlockComment
         var inString = false
+        var inChar = false
         var escaped = false
-        var previous: Character = " "
+        var depth = blockCommentDepth
 
-        for character in line {
-            if inBlockComment {
-                if previous == "*" && character == "/" {
-                    inBlockComment = false
-                    previous = " "
-                    continue
+        var index = line.startIndex
+        while index < line.endIndex {
+            let character = line[index]
+            let next = line.index(after: index) < line.endIndex ? line[line.index(after: index)] : nil
+
+            if depth > 0 {
+                // Kotlin nests block comments: /* /* */ */
+                if character == "/", next == "*" {
+                    if kotlin { depth += 1 }
+                    index = line.index(after: index)
+                } else if character == "*", next == "/" {
+                    depth -= 1
+                    index = line.index(after: index)
+                } else {
+                    index = line.index(after: index)
                 }
-                previous = character
+                continue
+            }
+            if inRawString {
+                let i1 = line.index(after: index)
+                let i2 = i1 < line.endIndex ? line.index(after: i1) : i1
+                if character == "\"", i1 < line.endIndex, line[i1] == "\"", i2 < line.endIndex, line[i2] == "\"" {
+                    inRawString = false
+                    index = i2 // loop advances past the closing quote
+                }
+                index = line.index(after: index)
                 continue
             }
             if inString {
@@ -187,24 +275,47 @@ enum SymbolLocator {
                 } else if character == "\"" {
                     inString = false
                 }
-                previous = character
+                index = line.index(after: index)
                 continue
             }
+            if inChar {
+                if character == "'" { inChar = false }
+                index = line.index(after: index)
+                continue
+            }
+
             switch character {
+            case "\"" where kotlin && next == "\"" && thirdIsQuote(line, after: index):
+                inRawString = true
+                index = line.index(index, offsetBy: 2)
             case "\"":
                 inString = true
-            case "/" where previous == "/":
-                return (String(output.dropLast()), inBlockComment)
-            case "*" where previous == "/":
-                output.removeLast()
-                inBlockComment = true
-                previous = " "
-                continue
+                index = line.index(after: index)
+            case "'" where kotlin:
+                inChar = true
+                index = line.index(after: index)
+            case "/" where next == "/":
+                index = line.endIndex // rest of line is a comment
+            case "/" where next == "*":
+                depth = 1
+                index = line.index(after: index)
             default:
                 output.append(character)
+                index = line.index(after: index)
             }
-            previous = character
         }
-        return (output, inBlockComment)
+
+        blockCommentDepth = depth
+        return output
+    }
+
+    private func thirdIsQuote(_ line: String, after index: String.Index) -> Bool {
+        let second = line.index(after: index)
+        guard line.index(after: second) < line.endIndex else { return false }
+        return line[line.index(after: second)] == "\""
+    }
+
+    private func optionalIndex(_ index: String.Index, in line: String) -> String.Index? {
+        index < line.endIndex ? index : nil
     }
 }

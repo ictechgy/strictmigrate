@@ -70,7 +70,7 @@ enum MeasureRunner {
             }
         }
 
-        let mapper = targetMapper(root: root, warn: warn)
+        let mapper = hybridMapper(root: root, warn: warn)
         let result = try SPMBuilder.build(packageRoot: root, options: options)
         let log = result.combinedText
         let diagnostics = CompilerLogParser().parse(log, workingDirectory: root)
@@ -78,7 +78,7 @@ enum MeasureRunner {
         return MeasureOutcome(
             diagnostics: diagnostics,
             perTarget: mapper.tally(diagnostics),
-            targetsKnown: !mapper.targets.isEmpty,
+            targetsKnown: !mapper.spm.targets.isEmpty,
             buildCommand: (["swift"] + SPMBuilder.arguments(for: options)).joined(separator: " "),
             buildExitCode: result.exitCode,
             rawLog: log
@@ -87,8 +87,9 @@ enum MeasureRunner {
 
     /// Xcode pipeline: export an existing `.xcresult` bundle to JSON and parse
     /// its issue summaries. Targets are attributed through `Package.swift`
-    /// when one is present (xcodebuild on a package); otherwise everything
-    /// lands under `(unattributed)`.
+    /// when one is present (xcodebuild on a package), plus Gradle module/source-
+    /// sets for `.kt` files — the KMP boundary case, where Swift-side
+    /// diagnostics are fixed in the shared Kotlin module.
     static func measureXcresult(
         bundlePath: String,
         root: String,
@@ -98,14 +99,15 @@ enum MeasureRunner {
         let diagnostics = try XcresultParser().parse(jsonData: json, workingDirectory: root)
 
         let manifest = (root as NSString).appendingPathComponent("Package.swift")
-        let mapper = FileManager.default.fileExists(atPath: manifest)
+        let spmMapper = FileManager.default.fileExists(atPath: manifest)
             ? targetMapper(root: root, warn: warn)
             : TargetMapper(targets: [])
+        let mapper = HybridTargetMapper(spm: spmMapper, repoRoot: root)
 
         return MeasureOutcome(
             diagnostics: diagnostics,
             perTarget: mapper.tally(diagnostics),
-            targetsKnown: !mapper.targets.isEmpty,
+            targetsKnown: !mapper.spm.targets.isEmpty,
             buildCommand: nil,
             buildExitCode: nil,
             rawLog: String(decoding: json, as: UTF8.self)
@@ -119,6 +121,11 @@ enum MeasureRunner {
             warn("target attribution unavailable (\(error)); diagnostics will be reported as \(TargetMapper.unattributed)")
             return TargetMapper(targets: [])
         }
+    }
+
+    /// SPM targets plus Kotlin/Gradle attribution for KMP repositories.
+    private static func hybridMapper(root: String, warn: (String) -> Void) -> HybridTargetMapper {
+        HybridTargetMapper(spm: targetMapper(root: root, warn: warn), repoRoot: root)
     }
 
     /// Xcode 16+ requires `--legacy` for the ActionsInvocationRecord shape;
