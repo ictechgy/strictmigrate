@@ -74,6 +74,8 @@ struct TaskRecord: Codable, Equatable {
     var commits: [String]
     var verdict: Verdict?
     var attempts: Int
+    /// Per-attempt failure reasons (executor) — why attempts were reverted.
+    var notes: [String]
 
     enum Status: String, Codable, Sendable, CaseIterable {
         case queued
@@ -98,7 +100,8 @@ struct TaskRecord: Codable, Equatable {
         status: Status = .queued,
         commits: [String] = [],
         verdict: Verdict? = nil,
-        attempts: Int = 0
+        attempts: Int = 0,
+        notes: [String] = []
     ) {
         self.id = id
         self.target = target
@@ -109,10 +112,11 @@ struct TaskRecord: Codable, Equatable {
         self.commits = commits
         self.verdict = verdict
         self.attempts = attempts
+        self.notes = notes
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, target, file, symbols, diagnostics, status, commits, verdict, attempts
+        case id, target, file, symbols, diagnostics, status, commits, verdict, attempts, notes
     }
 
     init(from decoder: Decoder) throws {
@@ -126,6 +130,7 @@ struct TaskRecord: Codable, Equatable {
         commits = try container.decodeIfPresent([String].self, forKey: .commits) ?? []
         verdict = try container.decodeIfPresent(Verdict.self, forKey: .verdict)
         attempts = try container.decodeIfPresent(Int.self, forKey: .attempts) ?? 0
+        notes = try container.decodeIfPresent([String].self, forKey: .notes) ?? []
     }
 }
 

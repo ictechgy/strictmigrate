@@ -186,10 +186,46 @@ extension Journal {
         tasks.first { $0.status == .queued }
     }
 
+    /// Queued task ids, in queue order, up to `limit` (0 = all).
+    func queuedTaskIDs(limit: Int) -> [String] {
+        let ids = tasks.filter { $0.status == .queued || $0.status == .assigned }.map(\.id)
+        return limit > 0 ? Array(ids.prefix(limit)) : ids
+    }
+
     @discardableResult
     mutating func markAssigned(id: String) -> Bool {
         guard let index = tasks.firstIndex(where: { $0.id == id && $0.status == .queued }) else { return false }
         tasks[index].status = .assigned
+        return true
+    }
+
+    /// Terminal failure after exhausting attempts: reverted, with reasons.
+    @discardableResult
+    mutating func markReverted(id: String, attempts: Int, notes: [String]) -> Bool {
+        guard let index = tasks.firstIndex(where: { $0.id == id }) else { return false }
+        tasks[index].status = .reverted
+        tasks[index].attempts = attempts
+        tasks[index].notes = notes
+        return true
+    }
+
+    /// Attach the commit hash of a passed attempt (reconcile already closed
+    /// the status; this records the revert boundary).
+    @discardableResult
+    mutating func recordCommit(taskID: String, commit: String, attempts: Int, notes: [String]) -> Bool {
+        guard let index = tasks.firstIndex(where: { $0.id == taskID }) else { return false }
+        tasks[index].commits.append(commit)
+        tasks[index].attempts = attempts
+        if !notes.isEmpty {
+            tasks[index].notes = notes
+        }
+        return true
+    }
+
+    @discardableResult
+    mutating func markSkipped(id: String) -> Bool {
+        guard let index = tasks.firstIndex(where: { $0.id == id && $0.status != .passed }) else { return false }
+        tasks[index].status = .skipped
         return true
     }
 }

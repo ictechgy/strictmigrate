@@ -10,8 +10,10 @@ struct StrictMigrate: ParsableCommand {
             The compiler is the judge, the journal is the source of truth.
             v0.1 measures diagnostics per target and tracks progress — no agent required.
             """,
-        version: "0.2.0",
-        subcommands: [Init.self, Measure.self, Status.self, Slice.self, Next.self, Tasks.self]
+        version: "0.3.0",
+        subcommands: [
+            Init.self, Measure.self, Status.self, Slice.self, Next.self, Tasks.self, Run.self, Skip.self,
+        ]
     )
 }
 
@@ -447,6 +449,127 @@ extension StrictMigrate {
 
         private func pad(_ text: String, _ width: Int) -> String {
             text.count >= width ? text : text + String(repeating: " ", count: width - text.count)
+        }
+    }
+}
+
+// MARK: - run
+
+extension StrictMigrate {
+    struct Run: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Execute queued tasks through an agent: dispatch, judge, commit or revert.",
+            discussion: """
+                One task = one commit = one revert boundary. The agent edits code; \
+                the compiler judges (task clean, no regressions elsewhere); the journal records. \
+                Failed attempts are reverted atomically; after --max-attempts the task lands \
+                in `reverted` with reasons in its notes. Prompts, transcripts and build logs \
+                are kept under .strictmigrate/.
+                """
+        )
+
+        @OptionGroup var location: LocationOptions
+
+        @Option(name: .shortAndLong, help: "Execute exactly this task id (must be queued or assigned).")
+        var task: String?
+
+        @Option(name: .long, help: "How many queued tasks to execute (0 = drain the queue).")
+        var maxTasks: Int = 1
+
+        @Option(name: .long, help: "Attempts per task before giving up as `reverted`.")
+        var maxAttempts: Int = 2
+
+        @Option(name: .shortAndLong, help: "Strict concurrency level for verdict builds.")
+        var level: StrictLevel = .complete
+
+        @Option(name: .long, help: "Agent backend: `claude` (claude-code CLI) or `command` (generic shell).")
+        var adapter: String = "claude"
+
+        @Option(name: .long, help: """
+            Shell command for --adapter command. Runs in the package root with \
+            STRICTMIGRATE_PROMPT_FILE pointing at the prompt; e.g. \
+            `codex exec --full-auto "$(cat $STRICTMIGRATE_PROMPT_FILE)"`.
+            """)
+        var adapterCommand: String?
+
+        @Option(name: .long, parsing: .unconditionalSingleValue, help: "Extra argument passed to the claude CLI (repeatable).")
+        var claudeArg: [String] = []
+
+        func run() throws {
+            let root = location.resolvedRoot
+            let journalPath = location.resolvedJournalPath
+            var journal = try JournalStore.load(at: journalPath)
+
+            let ids: [String]
+            if let task {
+                ids = [task]
+            } else {
+                ids = journal.queuedTaskIDs(limit: maxTasks)
+            }
+            guard !ids.isEmpty else {
+                print("No queued tasks. Run `strictmigrate measure` and `strictmigrate slice` first.")
+                return
+            }
+
+            let adapter = try AgentAdapterFactory.make(
+                kind: adapter, commandLine: adapterCommand, claudeArguments: claudeArg
+            )
+            let workDirectory = try JournalStore.ensureWorkDirectory(in: root)
+            let executor = TaskExecutor(
+                adapter: adapter,
+                root: root,
+                git: GitWorkingCopy(root: root),
+                whitelist: PathWhitelist(journalPath: PathUtils.relativize(journalPath, against: root)),
+                journalPath: journalPath,
+                workDirectory: workDirectory,
+                options: TaskExecutor.Options(
+                    level: level,
+                    buildTests: false,
+                    maxAttempts: maxAttempts
+                )
+            )
+
+            let reports = try executor.execute(taskIDs: ids, journal: &journal) { line in
+                print(line)
+            }
+
+            print("")
+            print("── summary ──────────────────────────")
+            for report in reports {
+                let commit = report.commit.map { " commit \($0)" } ?? ""
+                print("\(report.taskID): \(report.finalStatus.rawValue)\(commit)")
+                for attempt in report.attempts where !attempt.passed {
+                    print("   a\(attempt.number): \(attempt.note)")
+                }
+            }
+            let passedCount = reports.filter(\.passed).count
+            print("")
+            print("\(passedCount)/\(reports.count) passed — journal: \(journalPath)")
+        }
+    }
+}
+
+// MARK: - skip
+
+extension StrictMigrate {
+    struct Skip: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Mark a task skipped so the queue moves past it."
+        )
+
+        @OptionGroup var location: LocationOptions
+
+        @Argument(help: "Task id, e.g. t-0003.")
+        var taskID: String
+
+        func run() throws {
+            let journalPath = location.resolvedJournalPath
+            var journal = try JournalStore.load(at: journalPath)
+            guard journal.markSkipped(id: taskID) else {
+                throw ValidationError("no open task \(taskID) in \(journalPath)")
+            }
+            try JournalStore.save(journal, to: journalPath)
+            print("\(taskID) → skipped")
         }
     }
 }

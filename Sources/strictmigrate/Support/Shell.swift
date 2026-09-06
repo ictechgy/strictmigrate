@@ -26,7 +26,12 @@ enum ShellError: Error, CustomStringConvertible {
 /// compiler logs cannot deadlock on a full pipe. A non-zero exit is *not* an
 /// error here — a failing build is the normal case during a migration.
 enum Shell {
-    static func run(_ command: String, arguments: [String], currentDirectory: String? = nil) throws -> ShellResult {
+    static func run(
+        _ command: String,
+        arguments: [String],
+        currentDirectory: String? = nil,
+        environment: [String: String]? = nil
+    ) throws -> ShellResult {
         let process = Process()
         if command.contains("/") {
             process.executableURL = URL(fileURLWithPath: command)
@@ -37,6 +42,13 @@ enum Shell {
         }
         if let currentDirectory {
             process.currentDirectoryURL = URL(fileURLWithPath: currentDirectory, isDirectory: true)
+        }
+        if let environment {
+            var merged = ProcessInfo.processInfo.environment
+            for (key, value) in environment {
+                merged[key] = value
+            }
+            process.environment = merged
         }
 
         let stdoutPipe = Pipe()

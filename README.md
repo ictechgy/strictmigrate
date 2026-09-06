@@ -4,7 +4,7 @@
 
 The official migration guide is a great 40-page document. strictmigrate turns those 40 pages into an executable task queue: the compiler counts the verdicts, the journal records where the migration stands, and the agent (or a human) holds the pen in between.
 
-**v0.2 — measure, journal, slice, dispatch.** Useful with zero agents: point it at a Swift package, get per-target diagnostic counts, slice them into atomic one-symbol tasks, and work the queue with ready-to-paste prompts.
+**v0.3 — measure, journal, slice, dispatch, execute.** Agents hold the pen; the compiler judges; the journal remembers. claude-code ships as the first adapter, and any CLI agent works through the generic command adapter today.
 
 ```console
 $ strictmigrate status
@@ -99,6 +99,38 @@ Verify (the compiler is the judge):
 
 Paste that prompt into your editor, a chat agent, or a teammate — fix it, then `strictmigrate measure` again. The measure run reconciles the queue automatically: tasks whose diagnostics are gone close as `passed`; partial fixes stay open. Nothing is remembered in anyone's head; it is all in the journal.
 
+### The agent loop (v0.3)
+
+Let an agent work the queue itself:
+
+```console
+$ strictmigrate run --task t-0003 --adapter claude
+Measuring current state before dispatch …
+── t-0003 [ImagePipelineCore] Sources/ImagePipelineCore/Renderer.swift · spawnWork
+   attempt 1/2: dispatching claude-code …
+   agent finished (exit 0); measuring …
+   passed — committed aca26a2, journal updated.
+
+1/1 passed — journal: strictmigrate.yaml.journal
+```
+
+What happened in between, all deterministic:
+
+1. **Clean-tree precondition** — git must be clean (harness state like `.strictmigrate/` and agent session dirs are whitelisted). The revert boundary only works from a clean tree.
+2. **Dispatch** — the task prompt goes to the adapter (`claude` uses `claude --print --permission-mode acceptEdits`; the agent never runs builds — judging is not its job).
+3. **Scope check** — the agent may edit exactly the task's file. Any other edit (even bookkeeping outside whitelisted state dirs) reverts everything, the attempt fails, and the reason lands in the journal.
+4. **Verdict** — a fresh strict build runs; the task's symbols must be clean *and* no symbol anywhere else may have gained diagnostics. Aggregate improvement is not enough.
+5. **Commit or revert** — pass: exactly the task's file is committed (`one task = one commit = one revert boundary`) and the hash lands in the journal. Fail: edits are discarded, the tree returns to exactly its pre-state, and after `--max-attempts` the task is `reverted` with per-attempt notes.
+
+Any CLI agent works today via the generic adapter:
+
+```console
+$ strictmigrate run --adapter command \
+    --adapter-command 'codex exec --full-auto "$(cat $STRICTMIGRATE_PROMPT_FILE)"'
+```
+
+Prompts, transcripts, and build logs for every attempt are kept under `.strictmigrate/` for post-mortems.
+
 A live example lives in [`Examples/DemoConcurrency`](Examples/DemoConcurrency) — a tiny package with intentional violations of all three categories.
 
 ## Commands
@@ -110,7 +142,9 @@ A live example lives in [`Examples/DemoConcurrency`](Examples/DemoConcurrency) �
 | `strictmigrate status` | Render the journal as a report (`pretty`, `markdown`, `json`). |
 | `strictmigrate slice` | Cluster the last measurement into atomic tasks (one symbol group = one task). |
 | `strictmigrate next` | Print the next task with a ready-to-paste prompt (`--peek` to leave it queued). |
+| `strictmigrate run` | Execute tasks through an agent: dispatch, judge, commit or revert. |
 | `strictmigrate tasks` | List tasks and their statuses. |
+| `strictmigrate skip` | Mark a task skipped so the queue moves past it. |
 
 ### `measure` options
 
@@ -185,8 +219,7 @@ Known ground roughness, handled explicitly: incremental builds don't re-emit cac
 
 ## Roadmap
 
-- **v0.3** — agent executor: claude-code adapter runs `next` prompts automatically, verdicts via build + tests, one task = one commit = one revert boundary, attempt limits.
-- **v0.4** — codex/ACP adapters (Xcode agents), ThreadSanitizer verdicts, cross-target regression detection.
+- **v0.4** — dedicated codex/ACP adapters (Xcode 27 agents), test-suite verdicts, ThreadSanitizer option, cross-target regression detection.
 - **v0.5 (undecided)** — Kotlin K2/JVM strict mode adapter.
 
 ## Development
