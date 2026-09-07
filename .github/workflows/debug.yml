@@ -33,6 +33,7 @@ jobs:
             cd "$DBG"
             for n in 1 2 3; do
               echo "########## RUN $n ##########"
+              "$TOOL" init >/dev/null
               "$TOOL" measure --verbose
               echo "---- region lines in raw log ----"
               grep -nE "region|sending" .strictmigrate/last-build.log | head -15
