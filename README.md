@@ -55,8 +55,8 @@ build: swift build --no-color-diagnostics --scratch-path .strictmigrate/measure-
 diagnostics: 5 tracked (sendable 1, isolation 3, region 1, other 0); 0 unrelated, not counted
 
 Target             Sendable  Isolation  Region  Other  Total   Δ vs previous
-ImagePipelineCore         1          3       0      0      4   new
-DemoApp                   0          0       1      0      1   new
+ImagePipelineCore         1          3       1      0      5   new
+DemoApp                   0          0       0      0      0   new
 
 journal updated: strictmigrate.yaml.journal
 

@@ -42,20 +42,21 @@ final class SPMIntegrationTests: XCTestCase {
         )
 
         // The demo package is designed to fail building with exactly these
-        // diagnostics: 1 sendable + 3 isolation in ImagePipelineCore and
-        // 1 region in DemoApp on the pinned stable toolchain (Xcode 26.6 /
-        // Swift 6.3.3). See Sources/* in Examples/DemoConcurrency.
+        // diagnostics on the pinned stable toolchain (Xcode 26.6 / Swift 6.3.3):
+        // 1 sendable + 3 isolation + 1 region (the 'sending' closure in
+        // Pipeline.swift) in ImagePipelineCore; DemoApp measures clean.
+        // See Sources/* in Examples/DemoConcurrency.
         XCTAssertEqual(outcome.buildExitCode, 1)
         XCTAssertTrue(outcome.targetsKnown)
 
         let core = try XCTUnwrap(outcome.perTarget["ImagePipelineCore"])
         XCTAssertEqual(core.sendable, 1)
         XCTAssertEqual(core.isolation, 3)
-        XCTAssertEqual(core.region, 0)
+        XCTAssertEqual(core.region, 1)
 
         let app = try XCTUnwrap(outcome.perTarget["DemoApp"])
-        XCTAssertEqual(app.region, 1)
-        XCTAssertEqual(app.trackedTotal, 1)
+        XCTAssertEqual(app.region, 0)
+        XCTAssertEqual(app.trackedTotal, 0)
 
         XCTAssertEqual(outcome.unrelatedCount, 0)
         XCTAssertEqual(outcome.tracked.trackedTotal, 5)
@@ -77,7 +78,7 @@ final class SPMIntegrationTests: XCTestCase {
 
         // Second measurement with one diagnostic group fixed (simulated).
         var healed = outcome.perTarget
-        healed["ImagePipelineCore"] = DiagnosticCounts(sendable: 1, isolation: 1)
+        healed["ImagePipelineCore"] = DiagnosticCounts(sendable: 1, isolation: 1, region: 1)
         journal.applyMeasurement(at: Date(), level: .complete, results: healed)
 
         let payload = StatusReport.payload(for: journal)
