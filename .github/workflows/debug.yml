@@ -1,9 +1,8 @@
 name: diagnose-executor-revert
 
-# TEMPORARY diagnosis workflow — reproduces the ExecutorTests revert on this
-# runner's toolchain by measuring the pristine and fixed fixture directly.
-# All output is re-emitted as annotations because raw logs are not reachable
-# from the dev environment. Delete once the root cause is fixed.
+# TEMPORARY diagnosis workflow — runs the suite under multiple Xcodes to find
+# the toolchain whose diagnostic surface matches the pinned fixtures.
+# Delete once the root cause is fixed.
 
 on:
   push:
@@ -11,53 +10,27 @@ on:
   workflow_dispatch:
 
 jobs:
-  diagnose:
-    name: measure pristine vs fixed fixture (temporary)
+  matrix:
+    name: swift test under Xcode ${{ matrix.xcode }}
     runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        xcode: ["26.5", "26.6"]
     steps:
       - uses: actions/checkout@v4
 
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: ${{ matrix.xcode }}
 
-      - name: swift build
-        run: swift build
-
-      - name: reproduce verdict failure
+      - name: swift test
         run: |
+          xcrun swift --version | head -2 | while IFS= read -r l; do echo "::notice::[xcode ${{ matrix.xcode }}] $l"; done
           set +e
-          {
-            TOOL="$GITHUB_WORKSPACE/.build/debug/strictmigrate"
-            DBG="$HOME/dbg-repro"
-            TESTSRC="$GITHUB_WORKSPACE/Tests/strictmigrateTests/ExecutorTests.swift"
-            rm -rf "$DBG" && mkdir -p "$DBG"
-            cp -R "$GITHUB_WORKSPACE/Examples/DemoConcurrency/Package.swift" "$GITHUB_WORKSPACE/Examples/DemoConcurrency/Sources" "$DBG/"
-            cd "$DBG"
-            git init -q
-            git config user.email t@t; git config user.name t
-            git add -A; git commit -qm fixture
-            "$TOOL" init; echo "init exit: $?"
-            echo "===== BASELINE (pristine fixture) ====="
-            "$TOOL" measure --verbose; echo "measure exit: $?"
-            python3 - "$TESTSRC" <<'PY'
-          import re, sys, textwrap
-          src = open(sys.argv[1]).read()
-          m = re.search(r'spawnWorkFixed = """\n(.*?)\n\s*"""', src, re.S)
-          assert m, "spawnWorkFixed literal not found"
-          open("Sources/ImagePipelineCore/Renderer.swift", "w").write(textwrap.dedent(m.group(1)) + "\n")
-          print("fixed Renderer.swift written")
-          PY
-          echo "python exit: $?"
-            echo "===== AFTER known-good fix ====="
-            "$TOOL" measure --verbose; echo "measure exit: $?"
-            echo "===== git status ====="
-            git status --short
-            echo "===== journal ====="
-            cat ./*.journal 2>/dev/null || cat strictmigrate.yaml.journal 2>/dev/null
-            echo "===== last build log (errors) ====="
-            grep -E "error:" .strictmigrate/*.log 2>/dev/null | head -20
-          } > "$HOME/diag.log" 2>&1
-          st=$?
-          tail -200 "$HOME/diag.log" | grep -E "=====|exit:|error|warning|diagnostic|Sendable|isolation|region|Total|ImagePipelineCore|DemoApp|fatal|Trace|assert|written|renderer|Renderer|spawnWork" | head -90 | while IFS= read -r l; do echo "::notice::${l:0:400}"; done
+          swift test 2>&1 | tee .build/sm-test.log
+          st=${PIPESTATUS[0]}
+          set -e
+          echo "::notice::[xcode ${{ matrix.xcode }}] exit=$st suites: $(grep -c "Test Suite .* passed" .build/sm-test.log || true) passed, $(grep -c "Test Suite .* failed" .build/sm-test.log || true) failed"
+          grep -E "error:|Test Suite '.*' failed" .build/sm-test.log | head -20 | while IFS= read -r l; do echo "::error::[xcode ${{ matrix.xcode }}] ${l:0:300}"; done
           exit $st
