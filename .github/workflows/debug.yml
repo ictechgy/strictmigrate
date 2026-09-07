@@ -1,13 +1,16 @@
 name: diagnose-executor-revert
 
-# TEMPORARY diagnosis workflow — runs the suite under multiple Xcodes to find
-# the toolchain whose diagnostic surface matches the pinned fixtures.
-# Delete once the root cause is fixed.
+# TEMPORARY diagnosis workflow — runs the suite under multiple Xcodes and
+# publishes the full test log to a ci-diag branch so it can be read without
+# runner log access. Delete once the root cause is fixed.
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   matrix:
@@ -35,7 +38,19 @@ jobs:
           swift test 2>&1 | tee "$LOG"
           st=${PIPESTATUS[0]}
           set -e
-          echo "::notice::[xcode ${{ matrix.xcode }}] swift test exit=$st"
-          grep -E "Test Suite|Suite '.*' failed|error:|failed \(" "$LOG" | head -25 | while IFS= read -r l; do echo "::error::[xcode ${{ matrix.xcode }}] ${l:0:300}"; done
-          tail -20 "$LOG" | while IFS= read -r l; do echo "::notice::[xcode ${{ matrix.xcode }}] tail: ${l:0:200}"; done
+          echo "::notice::[xcode ${{ matrix.xcode }}] swift test exit=$st log_lines=$(wc -l < "$LOG" | tr -d ' ')"
+          echo "Test Suite summary: $(grep -E \"Test Suite 'All tests'|Executed [0-9]+ tests\" "$LOG" | tail -4 | tr '\n' ' ')" | while IFS= read -r l; do echo "::notice::[xcode ${{ matrix.xcode }}] ${l:0:400}"; done
+          grep -E "Test Suite '.*' failed|error:|failed \([0-9]+ test|Fatal error|Crash" "$LOG" | head -25 | while IFS= read -r l; do echo "::error::[xcode ${{ matrix.xcode }}] ${l:0:300}"; done
           exit $st
+
+      - name: publish log to ci-diag branch
+        if: always()
+        run: |
+          git config user.name "ci-diag"
+          git config user.email "ci-diag@users.noreply.github.com"
+          BR="ci-diag-${{ matrix.xcode }}"
+          git checkout -q -B "$BR"
+          cp "$RUNNER_TEMP/sm-test.log" "diag-xcode-${{ matrix.xcode }}.log"
+          git add "diag-xcode-${{ matrix.xcode }}.log"
+          git commit -qm "diag: full swift test log under Xcode ${{ matrix.xcode }}"
+          git push -q origin "$BR" --force
