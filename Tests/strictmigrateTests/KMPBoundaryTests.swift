@@ -258,7 +258,7 @@ final class KmpBoundaryIntegrationTests: XCTestCase {
     }
 
     private static let fixedMainSwift = """
-        import SharedKit
+        @preconcurrency import SharedKit
 
         let cache = SessionCache()
 

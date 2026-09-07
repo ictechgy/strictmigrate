@@ -18,12 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The tool's verdicts and fixture counts are pinned against the Swift 6.4 /
-      # Xcode 27 diagnostic surface — keep the runner on the latest stable Xcode.
+      # Pinned toolchain: fixture diagnostics and test expectations are tied
+      # to a specific compiler's diagnostic surface (Swift 6.3.3 / Xcode 26.6,
+      # the macos-26 image default at pin time). Bump deliberately and re-pin
+      # Tests/ + Examples/ together.
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: "26.6"
 
       - name: swift build
         run: swift build

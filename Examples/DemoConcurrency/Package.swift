@@ -5,6 +5,9 @@ import PackageDescription
 
 let package = Package(
     name: "DemoConcurrency",
+    // An explicit floor keeps SPM's default (macOS 10.13 under swift-tools 5.10)
+    // from turning Task/withTaskGroup availability errors into measurement noise.
+    platforms: [.macOS(.v13)],
     products: [
         .library(name: "ImagePipelineCore", targets: ["ImagePipelineCore"])
     ],

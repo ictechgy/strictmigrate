@@ -6,6 +6,8 @@ import PackageDescription
 
 let package = Package(
     name: "KmpBoundary",
+    // Explicit floor — see DemoConcurrency/Package.swift.
+    platforms: [.macOS(.v13)],
     targets: [
         .target(name: "SharedKit"),
         .executableTarget(
