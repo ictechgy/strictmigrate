@@ -84,7 +84,7 @@ final class SPMIntegrationTests: XCTestCase {
         let payload = StatusReport.payload(for: journal)
         XCTAssertEqual(payload.summary.initialTotal, 5)
         XCTAssertEqual(payload.summary.remainingTotal, 3)
-        XCTAssertEqual(payload.summary.progressPercent, 60)
+        XCTAssertEqual(payload.summary.progressPercent, 40)
 
         let report = StatusReport.pretty(payload, journalPath: "strictmigrate.yaml.journal")
         XCTAssertTrue(report.contains("ImagePipelineCore"))
