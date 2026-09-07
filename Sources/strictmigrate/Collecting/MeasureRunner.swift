@@ -114,6 +114,18 @@ enum MeasureRunner {
         )
     }
 
+    /// Short toolchain identity recorded in the journal (`measured_with`), so
+    /// diagnostic-count changes can be traced to compiler/SDK drift — the
+    /// surface genuinely differs per toolchain pair.
+    static func swiftVersionLabel() -> String? {
+        guard let result = try? Shell.run("swift", arguments: ["--version"]) else { return nil }
+        let text = result.stdoutText
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .prefix(2)
+            .joined(separator: "; ")
+        return text.isEmpty ? nil : text
+    }
+
     private static func targetMapper(root: String, warn: (String) -> Void) -> TargetMapper {
         do {
             return TargetMapper(targets: try PackageInspector.targets(packageRoot: root))

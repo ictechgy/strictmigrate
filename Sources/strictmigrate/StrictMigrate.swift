@@ -120,6 +120,7 @@ extension StrictMigrate {
                     incremental: incremental,
                     warn: warn
                 )
+                journal.measuredWith = MeasureRunner.swiftVersionLabel()
             }
 
             let previous = journal.targets
@@ -390,18 +391,14 @@ extension StrictMigrate {
             let all = CompilerLogParser().parse(log, workingDirectory: root)
             guard !all.isEmpty else { return [] }
             let keys = Set(task.symbols.map { SymbolKey(file: task.file, symbol: $0) })
-            let resolved = Journal.symbolKeys(for: all, packageRoot: root)
+            var resolver = SymbolResolver(packageRoot: root)
+            let resolved = resolver.symbolKeys(for: all)
             // Map diagnostics to their symbol identity, keep those in the task.
-            var symbolCache: [String: [SymbolRange]] = [:]
             return all.filter { diagnostic in
                 guard diagnostic.category.isTracked else { return false }
-                if symbolCache[diagnostic.file] == nil {
-                    let absolute = (root as NSString).appendingPathComponent(diagnostic.file)
-                    symbolCache[diagnostic.file] = (try? String(contentsOfFile: absolute, encoding: .utf8))
-                        .map { SymbolLocator.symbols(in: $0, language: SourceLanguage(path: diagnostic.file)) } ?? []
-                }
-                let symbol = SymbolLocator.symbolName(for: diagnostic, symbols: symbolCache[diagnostic.file] ?? [])
-                return keys.contains(SymbolKey(file: diagnostic.file, symbol: symbol)) && resolved.contains(SymbolKey(file: diagnostic.file, symbol: symbol))
+                let symbol = resolver.symbolName(for: diagnostic)
+                return keys.contains(SymbolKey(file: diagnostic.file, symbol: symbol))
+                    && resolved.contains(SymbolKey(file: diagnostic.file, symbol: symbol))
             }
         }
     }

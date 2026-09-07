@@ -5,12 +5,12 @@ import XCTest
 final class AdapterAndVerdictTests: XCTestCase {
     func testCodexAdapterArgumentConstruction() {
         XCTAssertEqual(
-            CodexAdapter.arguments(prompt: "fix it", extraArguments: []),
-            ["exec", "-s", "workspace-write", "--color", "never", "fix it"]
+            CodexAdapter.arguments(extraArguments: []),
+            ["exec", "-s", "workspace-write", "--color", "never", "-"]
         )
         XCTAssertEqual(
-            CodexAdapter.arguments(prompt: "p", extraArguments: ["-m", "gpt-5.4"]),
-            ["exec", "-s", "workspace-write", "--color", "never", "p", "-m", "gpt-5.4"]
+            CodexAdapter.arguments(extraArguments: ["-m", "gpt-5.4"]),
+            ["exec", "-s", "workspace-write", "--color", "never", "-", "-m", "gpt-5.4"]
         )
     }
 

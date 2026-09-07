@@ -1,66 +1,5 @@
 import Foundation
 
-/// Result of comparing pre/post diagnostics for one attempt.
-/// Pass requires BOTH the task's symbols to be clean AND no symbol outside
-/// the task getting worse — regressions are enforced per symbol, not just in
-/// aggregate.
-struct AttemptVerdict: Equatable, Sendable {
-    var taskClean: Bool
-    /// (file, symbol) identities outside the task that gained diagnostics.
-    var regressionsElsewhere: [String]
-
-    var passed: Bool { taskClean && regressionsElsewhere.isEmpty }
-}
-
-enum VerdictCalculator {
-    static func verdict(
-        before: [ConcurrencyDiagnostic],
-        after: [ConcurrencyDiagnostic],
-        task: TaskRecord,
-        packageRoot: String,
-        fileTarget: ((String) -> String?)? = nil
-    ) -> AttemptVerdict {
-        let taskKeys = Set(task.symbols.map { SymbolKey(file: task.file, symbol: $0) })
-        let beforeCounts = symbolCounts(before, packageRoot: packageRoot)
-        let afterCounts = symbolCounts(after, packageRoot: packageRoot)
-
-        let taskClean = taskKeys.isDisjoint(with: Set(afterCounts.keys))
-        var regressions: [String] = []
-        for (key, afterCount) in afterCounts where !taskKeys.contains(key) {
-            let beforeCount = beforeCounts[key] ?? 0
-            if afterCount > beforeCount {
-                let delta = afterCount - beforeCount
-                if let target = fileTarget?(key.file), target != task.target {
-                    // Cross-target regression: the fix in one target broke another.
-                    regressions.append("\(target):\(key.file) [\(key.symbol)] +\(delta)")
-                } else {
-                    regressions.append("\(key.file) [\(key.symbol)] +\(delta)")
-                }
-            }
-        }
-
-        return AttemptVerdict(taskClean: taskClean, regressionsElsewhere: regressions.sorted())
-    }
-
-    private static func symbolCounts(
-        _ diagnostics: [ConcurrencyDiagnostic],
-        packageRoot: String
-    ) -> [SymbolKey: Int] {
-        var cache: [String: [SymbolRange]] = [:]
-        var counts: [SymbolKey: Int] = [:]
-        for diagnostic in diagnostics where diagnostic.category.isTracked {
-            if cache[diagnostic.file] == nil {
-                let absolute = (packageRoot as NSString).appendingPathComponent(diagnostic.file)
-                cache[diagnostic.file] = (try? String(contentsOfFile: absolute, encoding: .utf8))
-                    .map { SymbolLocator.symbols(in: $0, language: SourceLanguage(path: diagnostic.file)) } ?? []
-            }
-            let symbol = SymbolLocator.symbolName(for: diagnostic, symbols: cache[diagnostic.file] ?? [])
-            counts[SymbolKey(file: diagnostic.file, symbol: symbol), default: 0] += 1
-        }
-        return counts
-    }
-}
-
 /// One attempt within a task execution.
 struct AttemptReport: Equatable, Sendable {
     var number: Int
@@ -125,6 +64,10 @@ struct TaskExecutor {
         // run and chained across passed tasks (failed attempts restore the
         // exact pre-state, so the cache stays valid).
         var preDiagnostics: [ConcurrencyDiagnostic]?
+        // Kotlin source snapshot for boundary routing, rebuilt after each
+        // measurement — routing every attempt against fresh tree walks would
+        // re-read the whole repository each time.
+        var kotlinIndex: KotlinSourceIndex?
 
         for id in taskIDs {
             guard let index = journal.tasks.firstIndex(where: { $0.id == id }) else {
@@ -145,6 +88,7 @@ struct TaskExecutor {
                 log("Measuring current state before dispatch …")
                 let outcome = try measure()
                 preDiagnostics = outcome.diagnostics
+                kotlinIndex = KotlinSourceIndex(repoRoot: root)
                 persist(lastBuildLog: outcome.rawLog)
             }
 
@@ -164,7 +108,7 @@ struct TaskExecutor {
                 let allowedFiles: Set<String> = {
                     var files: Set<String> = [task.file]
                     for path in TaskRouter.kotlinFixTargets(
-                        diagnostics: preDiagnostics!, task: task, repoRoot: root
+                        diagnostics: preDiagnostics!, task: task, repoRoot: root, index: kotlinIndex
                     ) {
                         files.insert(path)
                     }
@@ -304,6 +248,7 @@ struct TaskExecutor {
                 }
                 try JournalStore.save(journal, to: journalPath)
                 preDiagnostics = post.diagnostics
+                kotlinIndex = KotlinSourceIndex(repoRoot: root)
                 if let commitHash {
                     log("   passed — committed \(commitHash) (\(commitPaths.count) file\(commitPaths.count == 1 ? "" : "s")), journal updated.")
                 } else {

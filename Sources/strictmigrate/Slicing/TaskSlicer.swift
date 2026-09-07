@@ -23,16 +23,11 @@ enum TaskSlicer {
     ) -> [TaskRecord] {
         // (target, file, symbol) → diagnostics
         var clusters: [ClusterKey: [ConcurrencyDiagnostic]] = [:]
-        var symbolCache: [String: [SymbolRange]] = [:]
+        var resolver = SymbolResolver(packageRoot: packageRoot)
 
         for diagnostic in diagnostics where diagnostic.category.isTracked {
             let target = mapper.target(forFile: diagnostic.file) ?? TargetMapper.unattributed
-            if symbolCache[diagnostic.file] == nil {
-                let absolute = (packageRoot as NSString).appendingPathComponent(diagnostic.file)
-                symbolCache[diagnostic.file] = (try? String(contentsOfFile: absolute, encoding: .utf8))
-                    .map { SymbolLocator.symbols(in: $0, language: SourceLanguage(path: diagnostic.file)) } ?? []
-            }
-            let symbol = SymbolLocator.symbolName(for: diagnostic, symbols: symbolCache[diagnostic.file] ?? [])
+            let symbol = resolver.symbolName(for: diagnostic)
             clusters[ClusterKey(target: target, file: diagnostic.file, symbol: symbol), default: []].append(diagnostic)
         }
 
@@ -99,149 +94,6 @@ enum TaskSlicer {
         var target: String
         var file: String
         var symbol: String
-    }
-}
-
-/// Identity of one atomic unit of work: a symbol within a file.
-struct SymbolKey: Hashable, Sendable {
-    var file: String
-    var symbol: String
-}
-
-extension Journal {
-    /// Resolves tracked diagnostics to their (file, symbol) identities.
-    /// Source files are read (and symbol sets cached) per call; Kotlin files
-    /// resolve with the Kotlin lexicon.
-    static func symbolKeys(
-        for diagnostics: [ConcurrencyDiagnostic],
-        packageRoot: String
-    ) -> Set<SymbolKey> {
-        var symbolCache: [String: [SymbolRange]] = [:]
-        var keys = Set<SymbolKey>()
-        for diagnostic in diagnostics where diagnostic.category.isTracked {
-            if symbolCache[diagnostic.file] == nil {
-                let absolute = (packageRoot as NSString).appendingPathComponent(diagnostic.file)
-                symbolCache[diagnostic.file] = (try? String(contentsOfFile: absolute, encoding: .utf8))
-                    .map { SymbolLocator.symbols(in: $0, language: SourceLanguage(path: diagnostic.file)) } ?? []
-            }
-            let symbol = SymbolLocator.symbolName(for: diagnostic, symbols: symbolCache[diagnostic.file] ?? [])
-            keys.insert(SymbolKey(file: diagnostic.file, symbol: symbol))
-        }
-        return keys
-    }
-
-    /// Next sequential task number (ids look like `t-0142`).
-    var nextTaskNumber: Int {
-        (tasks.compactMap { Int($0.id.dropFirst(2)) }.max() ?? 0) + 1
-    }
-
-    /// Tasks still in flight.
-    var openTasks: [TaskRecord] {
-        tasks.filter { $0.status == .queued || $0.status == .assigned }
-    }
-
-    /// Replace the queued backlog with freshly sliced tasks — the queue is
-    /// always derived from the latest measurement, so stale entries go;
-    /// assigned/passed/reverted/skipped history is never touched.
-    /// Returns the number of stale tasks dropped.
-    @discardableResult
-    mutating func replaceQueue(with fresh: [TaskRecord]) -> Int {
-        let stale = tasks.filter { $0.status == .queued }.count
-        tasks.removeAll { $0.status == .queued }
-        tasks.append(contentsOf: fresh)
-        return stale
-    }
-
-    /// Close open tasks whose (file, symbol) pairs no longer produce tracked
-    /// diagnostics. A task passes when its fix survived the latest build;
-    /// `buildExitCode` is recorded honestly (other targets may still fail).
-    /// Returns ids of tasks closed as passed.
-    @discardableResult
-    mutating func reconcileTasks(
-        against diagnostics: [ConcurrencyDiagnostic],
-        packageRoot: String,
-        buildExitCode: Int32?
-    ) -> [String] {
-        guard !openTasks.isEmpty else { return [] }
-        let remaining = Journal.symbolKeys(for: diagnostics, packageRoot: packageRoot)
-
-        var closed: [String] = []
-        for index in tasks.indices where tasks[index].status == .queued || tasks[index].status == .assigned {
-            let task = tasks[index]
-            let keys = task.symbols.map { SymbolKey(file: task.file, symbol: $0) }
-            guard !keys.isEmpty, !keys.contains(where: remaining.contains) else { continue }
-            tasks[index].status = .passed
-            tasks[index].verdict = TaskRecord.Verdict(
-                build: buildExitCode.map { $0 == 0 ? "pass" : "fail" } ?? "unknown",
-                tests: nil,
-                tsan: nil
-            )
-            tasks[index].attempts += 1
-            closed.append(task.id)
-        }
-        return closed
-    }
-
-    /// Highest-priority queued task (queue order is slice order).
-    var nextQueuedTask: TaskRecord? {
-        tasks.first { $0.status == .queued }
-    }
-
-    /// Queued task ids, in queue order, up to `limit` (0 = all).
-    func queuedTaskIDs(limit: Int) -> [String] {
-        let ids = tasks.filter { $0.status == .queued || $0.status == .assigned }.map(\.id)
-        return limit > 0 ? Array(ids.prefix(limit)) : ids
-    }
-
-    @discardableResult
-    mutating func markAssigned(id: String) -> Bool {
-        guard let index = tasks.firstIndex(where: { $0.id == id && $0.status == .queued }) else { return false }
-        tasks[index].status = .assigned
-        return true
-    }
-
-    /// Terminal failure after exhausting attempts: reverted, with reasons.
-    @discardableResult
-    mutating func markReverted(id: String, attempts: Int, notes: [String]) -> Bool {
-        guard let index = tasks.firstIndex(where: { $0.id == id }) else { return false }
-        tasks[index].status = .reverted
-        tasks[index].attempts = attempts
-        tasks[index].notes = notes
-        return true
-    }
-
-    /// Attach the commit hash of a passed attempt (reconcile already closed
-    /// the status; this records the revert boundary and optional test/TSan
-    /// verdicts from the same attempt).
-    @discardableResult
-    mutating func recordCommit(
-        taskID: String,
-        commit: String,
-        attempts: Int,
-        notes: [String],
-        tests: String? = nil,
-        tsan: String? = nil
-    ) -> Bool {
-        guard let index = tasks.firstIndex(where: { $0.id == taskID }) else { return false }
-        tasks[index].commits.append(commit)
-        tasks[index].attempts = attempts
-        if !notes.isEmpty {
-            tasks[index].notes = notes
-        }
-        if tests != nil || tsan != nil {
-            var verdict = tasks[index].verdict ?? TaskRecord.Verdict(build: "pass")
-            if let tests { verdict.tests = tests }
-            if let tsan { verdict.tsan = tsan }
-            tasks[index].verdict = verdict
-        }
-        return true
-    }
-
-    @discardableResult
-    mutating func markSkipped(id: String) -> Bool {
-        guard let index = tasks.firstIndex(where: { $0.id == id && $0.status != .passed }) else { return false }
-        tasks[index].status = .skipped
-        return true
     }
 }
 

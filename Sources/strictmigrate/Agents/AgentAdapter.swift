@@ -28,9 +28,11 @@ protocol AgentAdapter: Sendable {
     func run(_ invocation: AgentInvocation) throws -> AgentRunOutcome
 }
 
-/// claude-code, non-interactive: `claude --print <prompt> --permission-mode
-/// acceptEdits --max-turns <n>`. The adapter never grants broader permissions
-/// than file edits — running builds is the executor's job, not the agent's.
+/// claude-code, non-interactive: `claude --print` with the prompt on stdin
+/// (`--permission-mode acceptEdits --max-turns <n>`). The prompt stays off
+/// argv — argv is world-readable via `ps` on shared machines and caps at
+/// ARG_MAX. The adapter never grants broader permissions than file edits —
+/// running builds is the executor's job, not the agent's.
 struct ClaudeCodeAdapter: AgentAdapter {
     var name: String { "claude-code" }
     var maxTurns: Int = 24
@@ -39,12 +41,17 @@ struct ClaudeCodeAdapter: AgentAdapter {
 
     func run(_ invocation: AgentInvocation) throws -> AgentRunOutcome {
         let arguments = [
-            "--print", invocation.prompt,
+            "--print",
             "--permission-mode", "acceptEdits",
             "--max-turns", String(maxTurns),
         ] + extraArguments
 
-        let result = try Shell.run("claude", arguments: arguments, currentDirectory: invocation.workingDirectory)
+        let result = try Shell.run(
+            "claude",
+            arguments: arguments,
+            currentDirectory: invocation.workingDirectory,
+            stdin: Data(invocation.prompt.utf8)
+        )
         return AgentRunOutcome(exitCode: result.exitCode, transcript: result.combinedText)
     }
 }
@@ -69,9 +76,10 @@ struct CommandAdapter: AgentAdapter {
     }
 }
 
-/// OpenAI Codex CLI, non-interactive: `codex exec -s workspace-write <prompt>`
-/// (workspace-write sandbox; `exec` never prompts). As with claude-code, the
-/// agent edits; building and judging stay with the executor.
+/// OpenAI Codex CLI, non-interactive: `codex exec -s workspace-write -`
+/// (workspace-write sandbox; `exec` never prompts; `-` reads the prompt from
+/// stdin, keeping it off argv). As with claude-code, the agent edits;
+/// building and judging stay with the executor.
 struct CodexAdapter: AgentAdapter {
     var name: String { "codex" }
     /// Extra arguments appended verbatim (repeatable `--codex-arg`).
@@ -80,14 +88,15 @@ struct CodexAdapter: AgentAdapter {
     func run(_ invocation: AgentInvocation) throws -> AgentRunOutcome {
         let result = try Shell.run(
             "codex",
-            arguments: Self.arguments(prompt: invocation.prompt, extraArguments: extraArguments),
-            currentDirectory: invocation.workingDirectory
+            arguments: Self.arguments(extraArguments: extraArguments),
+            currentDirectory: invocation.workingDirectory,
+            stdin: Data(invocation.prompt.utf8)
         )
         return AgentRunOutcome(exitCode: result.exitCode, transcript: result.combinedText)
     }
 
-    static func arguments(prompt: String, extraArguments: [String]) -> [String] {
-        ["exec", "-s", "workspace-write", "--color", "never", prompt] + extraArguments
+    static func arguments(extraArguments: [String]) -> [String] {
+        ["exec", "-s", "workspace-write", "--color", "never", "-"] + extraArguments
     }
 }
 

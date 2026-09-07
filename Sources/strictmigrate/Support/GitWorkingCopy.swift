@@ -134,7 +134,7 @@ struct GitWorkingCopy {
         if let arrow = path.range(of: " -> ") {
             path = String(path[arrow.upperBound...])
         }
-        path = path.trimmingCharacters(in: .whitespaces)
+        path = Self.unquoteGitPath(path.trimmingCharacters(in: .whitespaces))
         guard !path.isEmpty else { return nil }
 
         let kind: GitChange.Kind
@@ -145,6 +145,71 @@ struct GitWorkingCopy {
         default: kind = .modified
         }
         return GitChange(kind: kind, path: path)
+    }
+
+    /// Unquotes a porcelain path. Git C-quotes paths containing non-ASCII
+    /// bytes, quotes, or control characters (`"\354\225\234.swift"`) whenever
+    /// `core.quotepath` is on — the default — so those paths arrive escaped
+    /// and must be decoded before they can match repository files.
+    static func unquoteGitPath(_ path: String) -> String {
+        let bytes = Array(path.utf8)
+        guard bytes.count >= 2,
+              bytes.first == UInt8(ascii: "\""),
+              bytes.last == UInt8(ascii: "\"")
+        else { return path }
+
+        let inner = bytes[1..<(bytes.count - 1)]
+        var out = [UInt8]()
+        out.reserveCapacity(inner.count)
+        var index = inner.startIndex
+        while index < inner.endIndex {
+            let byte = inner[index]
+            if byte != UInt8(ascii: "\\") {
+                out.append(byte)
+                index = inner.index(after: index)
+                continue
+            }
+            let escapeIndex = inner.index(after: index)
+            guard escapeIndex < inner.endIndex else {
+                out.append(byte) // lone trailing backslash
+                index = escapeIndex
+                continue
+            }
+            switch inner[escapeIndex] {
+            case UInt8(ascii: "n"):
+                out.append(0x0A)
+                index = inner.index(after: escapeIndex)
+            case UInt8(ascii: "t"):
+                out.append(0x09)
+                index = inner.index(after: escapeIndex)
+            case UInt8(ascii: "r"):
+                out.append(0x0D)
+                index = inner.index(after: escapeIndex)
+            case UInt8(ascii: "\\"), UInt8(ascii: "\""):
+                out.append(inner[escapeIndex])
+                index = inner.index(after: escapeIndex)
+            case UInt8(ascii: "0")...UInt8(ascii: "7"):
+                // Up to three octal digits: one UTF-8 byte, e.g. `\354\225\234` = 한.
+                var value = 0
+                var cursor = escapeIndex
+                var digits = 0
+                while digits < 3, cursor < inner.endIndex, let digit = Self.octalDigit(inner[cursor]) {
+                    value = value * 8 + Int(digit)
+                    digits += 1
+                    cursor = inner.index(after: cursor)
+                }
+                out.append(UInt8(truncatingIfNeeded: value))
+                index = cursor
+            default:
+                out.append(byte)
+                index = escapeIndex
+            }
+        }
+        return String(decoding: out, as: UTF8.self)
+    }
+
+    private static func octalDigit(_ byte: UInt8) -> UInt8? {
+        (UInt8(ascii: "0")...UInt8(ascii: "7")).contains(byte) ? byte - UInt8(ascii: "0") : nil
     }
 }
 

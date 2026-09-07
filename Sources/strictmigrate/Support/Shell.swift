@@ -26,11 +26,15 @@ enum ShellError: Error, CustomStringConvertible {
 /// compiler logs cannot deadlock on a full pipe. A non-zero exit is *not* an
 /// error here — a failing build is the normal case during a migration.
 enum Shell {
+    /// - Parameter stdin: Optional payload written to the child's standard
+    ///   input. Used to hand agent prompts to CLIs without putting them on
+    ///   argv, where they would be visible to `ps` on shared machines.
     static func run(
         _ command: String,
         arguments: [String],
         currentDirectory: String? = nil,
-        environment: [String: String]? = nil
+        environment: [String: String]? = nil,
+        stdin: Data? = nil
     ) throws -> ShellResult {
         let process = Process()
         if command.contains("/") {
@@ -51,6 +55,13 @@ enum Shell {
             process.environment = merged
         }
 
+        var stdinPipe: Pipe?
+        if stdin != nil {
+            let pipe = Pipe()
+            process.standardInput = pipe
+            stdinPipe = pipe
+        }
+
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
         process.standardOutput = stdoutPipe
@@ -64,6 +75,13 @@ enum Shell {
             try process.run()
         } catch {
             throw ShellError.launchFailed(command: ([command] + arguments).joined(separator: " "), underlying: error)
+        }
+
+        if let stdinPipe, let stdin {
+            // Prompt-sized payloads fit the pipe buffer; agents drain stdin
+            // immediately, so larger writes cannot stall either side.
+            try? stdinPipe.fileHandleForWriting.write(contentsOf: stdin)
+            try? stdinPipe.fileHandleForWriting.close()
         }
 
         drain(stdoutPipe.fileHandleForReading, into: stdoutBuffer, group: group)

@@ -19,6 +19,7 @@ struct CompilerLogParser {
     ///   - text: Raw build output (ANSI escapes tolerated; cleaned per line).
     ///   - workingDirectory: Absolute path used to relativize file locations.
     func parse(_ text: String, workingDirectory: String? = nil) -> [ConcurrencyDiagnostic] {
+        let relativizer = workingDirectory.flatMap { $0.isEmpty ? nil : PathRelativizer(directory: $0) }
         var seen = Set<String>()
         var diagnostics: [ConcurrencyDiagnostic] = []
 
@@ -33,7 +34,7 @@ struct CompilerLogParser {
             else { continue }
 
             let (message, diagnosticID) = TextCleaner.extractDiagnosticID(from: String(match.5))
-            let file = PathUtils.relativize(String(match.1), against: workingDirectory)
+            let file = relativizer?.relativize(String(match.1)) ?? String(match.1)
             let diagnostic = ConcurrencyDiagnostic(
                 file: file,
                 line: lineNumber,

@@ -20,8 +20,10 @@ struct XcresultParser {
 
         var seen = Set<String>()
         var diagnostics: [ConcurrencyDiagnostic] = []
+        let relativizer = workingDirectory.flatMap { $0.isEmpty ? nil : PathRelativizer(directory: $0) }
         for issue in collector.issues {
-            let file = PathUtils.relativize(issue.file ?? "(unknown)", against: workingDirectory)
+            let rawFile = issue.file ?? "(unknown)"
+            let file = relativizer?.relativize(rawFile) ?? rawFile
             let diagnostic = ConcurrencyDiagnostic(
                 file: file,
                 line: issue.line,

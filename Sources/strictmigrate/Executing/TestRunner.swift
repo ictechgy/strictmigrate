@@ -25,6 +25,17 @@ struct TestRunOutcome: Equatable, Sendable {
 /// whole package builds — the executor invokes this after a passing build
 /// verdict, never alongside a broken one.
 enum TestRunner {
+    // `Regex` is not Sendable on this toolchain, but these constants are
+    // immutable after construction and safe to share — hence `nonisolated(unsafe)`.
+    private nonisolated(unsafe) static let xctestSummary = try! Regex(
+        #"Executed (\d+) tests?, with (\d+) failures?"#,
+        as: (Substring, Substring, Substring).self
+    )
+    private nonisolated(unsafe) static let swiftTestingSummary = try! Regex(
+        #"Test run with (\d+) tests? (?:passed|failed)"#,
+        as: (Substring, Substring).self
+    )
+
     static func run(packageRoot: String, tsan: Bool) throws -> TestRunOutcome {
         var arguments = ["test", "--no-color-diagnostics"]
         if tsan {
@@ -41,19 +52,14 @@ enum TestRunner {
         // Prefer the last summary line in the combined output.
         var executed: Int?
         var failures = 0
-        let xctest = try! Regex(
-            #"Executed (\d+) tests?, with (\d+) failures?"#,
-            as: (Substring, Substring, Substring).self
-        )
-        for match in cleaned.matches(of: xctest) {
+        for match in cleaned.matches(of: xctestSummary) {
             executed = Int(match.1)
             failures = Int(match.2) ?? failures
         }
 
         // swift-testing: `Test run with 12 tests passed after …` — count only.
         if executed == nil {
-            let swiftTesting = try! Regex(#"Test run with (\d+) tests? (?:passed|failed)"#, as: (Substring, Substring).self)
-            for match in cleaned.matches(of: swiftTesting) {
+            for match in cleaned.matches(of: swiftTestingSummary) {
                 executed = Int(match.1)
             }
             if executed != nil, exitCode != 0 { failures = max(failures, 1) }

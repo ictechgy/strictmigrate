@@ -68,6 +68,18 @@ enum GradleTargetHeuristic {
     }
 }
 
+/// A snapshot of the repository's Kotlin sources, built once per measurement
+/// so per-attempt routing does not re-walk (and re-read) the whole tree.
+/// Failed attempts revert atomically, which keeps a snapshot valid for every
+/// attempt dispatched against the measurement it followed.
+struct KotlinSourceIndex: Sendable {
+    let sources: [(path: String, source: String)]
+
+    init(repoRoot: String) {
+        sources = TaskRouter.kotlinSources(repoRoot: repoRoot)
+    }
+}
+
 /// Routes Swift-side Sendable diagnostics back to the Kotlin declarations of
 /// the types they name — the KMP boundary's actual fix locations.
 ///
@@ -77,17 +89,21 @@ enum GradleTargetHeuristic {
 enum TaskRouter {
     /// Kotlin files where the task's non-Sendable types are declared.
     /// Capped so a vague diagnostic can't explode the edit scope.
+    /// `index` is an optional prefetch of the Kotlin sources; results are
+    /// identical with and without it.
     static func kotlinFixTargets(
         diagnostics: [ConcurrencyDiagnostic],
         task: TaskRecord,
         repoRoot: String,
+        index: KotlinSourceIndex? = nil,
         cap: Int = 2
     ) -> [String] {
         let typeNames = typeNames(diagnostics: diagnostics.filter { $0.file == task.file })
         guard !typeNames.isEmpty else { return [] }
 
+        let sources = index?.sources ?? kotlinSources(repoRoot: repoRoot)
         var routed: Set<String> = []
-        for (path, source) in kotlinSources(repoRoot: repoRoot) {
+        for (path, source) in sources {
             for typeName in typeNames where declares(typeName, in: source) {
                 routed.insert(path)
                 if routed.count >= cap { return sortedPaths(routed) }
@@ -126,7 +142,7 @@ enum TaskRouter {
     }
 
     /// All `.kt` files under the repo (bounded), mapped to repo-relative paths.
-    private static func kotlinSources(repoRoot: String) -> [(path: String, source: String)] {
+    static func kotlinSources(repoRoot: String) -> [(path: String, source: String)] {
         guard let enumerator = FileManager.default.enumerator(atPath: repoRoot) else { return [] }
         let skippedPrefixes: Set<String> = [".git", ".build", "build", ".strictmigrate", ".gradle", "DerivedData", ".swiftpm", "Pods"]
         var results: [(String, String)] = []

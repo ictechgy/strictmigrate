@@ -372,4 +372,18 @@ final class GitWorkingCopyTests: XCTestCase {
         XCTAssertFalse(whitelist.allows("strictmigrate.yaml.journal.bak"))
         XCTAssertFalse(whitelist.allows("CLAUDE.md"))
     }
+
+    func testUnquotesPorcelainPaths() {
+        // Plain paths pass through untouched.
+        XCTAssertEqual(GitWorkingCopy.unquoteGitPath("Sources/App/Main.swift"), "Sources/App/Main.swift")
+        // core.quotepath (the default) C-quotes non-ASCII bytes as octal UTF-8.
+        XCTAssertEqual(GitWorkingCopy.unquoteGitPath("\"Sources/\\354\\225\\234.swift\""), "Sources/한.swift")
+        // Escaped quotes and backslashes inside a quoted path.
+        XCTAssertEqual(GitWorkingCopy.unquoteGitPath("\"a\\\"b.swift\""), "a\"b.swift")
+        XCTAssertEqual(GitWorkingCopy.unquoteGitPath("\"a\\\\b.swift\""), "a\\b.swift")
+        // Control-character escapes.
+        XCTAssertEqual(GitWorkingCopy.unquoteGitPath("\"a\\tb.swift\""), "a\tb.swift")
+        // Already-UTF8 content inside quotes survives round-trip.
+        XCTAssertEqual(GitWorkingCopy.unquoteGitPath("\"Sources/한글.swift\""), "Sources/한글.swift")
+    }
 }
