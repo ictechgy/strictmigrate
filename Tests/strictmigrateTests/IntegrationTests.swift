@@ -42,11 +42,9 @@ final class SPMIntegrationTests: XCTestCase {
         )
 
         // The demo package is designed to fail building with exactly these
-        // diagnostics: 1 sendable + 3 isolation in ImagePipelineCore. DemoApp's
-        // region violations only surface on toolchains with region diagnostics
-        // enabled by default (Xcode 27-era); on the pinned stable toolchain
-        // (Xcode 26.6) DemoApp measures clean. See Sources/* in
-        // Examples/DemoConcurrency.
+        // diagnostics: 1 sendable + 3 isolation in ImagePipelineCore and
+        // 1 region in DemoApp on the pinned stable toolchain (Xcode 26.6 /
+        // Swift 6.3.3). See Sources/* in Examples/DemoConcurrency.
         XCTAssertEqual(outcome.buildExitCode, 1)
         XCTAssertTrue(outcome.targetsKnown)
 
@@ -56,11 +54,11 @@ final class SPMIntegrationTests: XCTestCase {
         XCTAssertEqual(core.region, 0)
 
         let app = try XCTUnwrap(outcome.perTarget["DemoApp"])
-        XCTAssertEqual(app.region, 0)
-        XCTAssertEqual(app.trackedTotal, 0)
+        XCTAssertEqual(app.region, 1)
+        XCTAssertEqual(app.trackedTotal, 1)
 
         XCTAssertEqual(outcome.unrelatedCount, 0)
-        XCTAssertEqual(outcome.tracked.trackedTotal, 4)
+        XCTAssertEqual(outcome.tracked.trackedTotal, 5)
     }
 
     func testMeasureToJournalToStatus() throws {
@@ -83,13 +81,13 @@ final class SPMIntegrationTests: XCTestCase {
         journal.applyMeasurement(at: Date(), level: .complete, results: healed)
 
         let payload = StatusReport.payload(for: journal)
-        XCTAssertEqual(payload.summary.initialTotal, 4)
-        XCTAssertEqual(payload.summary.remainingTotal, 2)
-        XCTAssertEqual(payload.summary.progressPercent, 50)
+        XCTAssertEqual(payload.summary.initialTotal, 5)
+        XCTAssertEqual(payload.summary.remainingTotal, 3)
+        XCTAssertEqual(payload.summary.progressPercent, 60)
 
         let report = StatusReport.pretty(payload, journalPath: "strictmigrate.yaml.journal")
         XCTAssertTrue(report.contains("ImagePipelineCore"))
-        XCTAssertTrue(report.contains("2 remaining concurrency diagnostics (from 4 initial)"))
+        XCTAssertTrue(report.contains("3 remaining concurrency diagnostics (from 5 initial)"))
     }
 }
 
