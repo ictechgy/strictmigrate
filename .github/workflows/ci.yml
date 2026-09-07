@@ -30,5 +30,13 @@ jobs:
 
       # Full suite including integration tests (real toolchain builds of the
       # example packages). STRICTMIGRATE_SKIP_INTEGRATION is deliberately unset.
+      # Failures are re-emitted as annotations so the failing tests are visible
+      # without downloading raw logs.
       - name: swift test
-        run: swift test
+        run: |
+          xcrun swift --version | head -2
+          set -o pipefail
+          swift test 2>&1 | tee .build/sm-test.log
+          st=$?
+          grep -E "error:|Test Suite '.*' failed|failed \([0-9]+ test" .build/sm-test.log | head -40 | while IFS= read -r l; do echo "::error::$l"; done
+          exit $st
