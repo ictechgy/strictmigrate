@@ -2,7 +2,8 @@ name: diagnose-executor-revert
 
 # TEMPORARY diagnosis workflow — reproduces the ExecutorTests revert on this
 # runner's toolchain by measuring the pristine and fixed fixture directly.
-# Delete once the root cause is fixed.
+# All output is re-emitted as annotations because raw logs are not reachable
+# from the dev environment. Delete once the root cause is fixed.
 
 on:
   push:
@@ -25,33 +26,38 @@ jobs:
 
       - name: reproduce verdict failure
         run: |
-          set -e
-          TOOL="$GITHUB_WORKSPACE/.build/debug/strictmigrate"
-          DBG="$HOME/dbg-repro"
-          rm -rf "$DBG" && mkdir -p "$DBG"
-          cp -R Examples/DemoConcurrency/Package.swift Examples/DemoConcurrency/Sources "$DBG/"
-          cd "$DBG"
-          git init -q
-          git config user.email t@t && git config user.name t
-          git add -A && git commit -qm fixture
-
-          "$TOOL" init
-          echo "===== BASELINE (pristine fixture) ====="
-          "$TOOL" measure --verbose 2>&1 | tail -50
-
-          python3 - <<'PY'
-          import re, textwrap
-          src = open("Tests/strictmigrateTests/ExecutorTests.swift").read()
+          set +e
+          {
+            TOOL="$GITHUB_WORKSPACE/.build/debug/strictmigrate"
+            DBG="$HOME/dbg-repro"
+            TESTSRC="$GITHUB_WORKSPACE/Tests/strictmigrateTests/ExecutorTests.swift"
+            rm -rf "$DBG" && mkdir -p "$DBG"
+            cp -R "$GITHUB_WORKSPACE/Examples/DemoConcurrency/Package.swift" "$GITHUB_WORKSPACE/Examples/DemoConcurrency/Sources" "$DBG/"
+            cd "$DBG"
+            git init -q
+            git config user.email t@t; git config user.name t
+            git add -A; git commit -qm fixture
+            "$TOOL" init; echo "init exit: $?"
+            echo "===== BASELINE (pristine fixture) ====="
+            "$TOOL" measure --verbose; echo "measure exit: $?"
+            python3 - "$TESTSRC" <<'PY'
+          import re, sys, textwrap
+          src = open(sys.argv[1]).read()
           m = re.search(r'spawnWorkFixed = """\n(.*?)\n\s*"""', src, re.S)
           assert m, "spawnWorkFixed literal not found"
           open("Sources/ImagePipelineCore/Renderer.swift", "w").write(textwrap.dedent(m.group(1)) + "\n")
+          print("fixed Renderer.swift written")
           PY
-
-          echo "===== AFTER known-good fix ====="
-          "$TOOL" measure --verbose 2>&1 | tail -50
-          echo "===== git diff stat ====="
-          git diff --stat
-          echo "===== raw log tail ====="
-          find .strictmigrate -type f -name '*.log' -exec sh -c 'echo "--- $1"; tail -40 "$1"' _ {} \;
-        env:
-          GITHUB_WORKSPACE: ${{ github.workspace }}
+          echo "python exit: $?"
+            echo "===== AFTER known-good fix ====="
+            "$TOOL" measure --verbose; echo "measure exit: $?"
+            echo "===== git status ====="
+            git status --short
+            echo "===== journal ====="
+            cat ./*.journal 2>/dev/null || cat strictmigrate.yaml.journal 2>/dev/null
+            echo "===== last build log (errors) ====="
+            grep -E "error:" .strictmigrate/*.log 2>/dev/null | head -20
+          } > "$HOME/diag.log" 2>&1
+          st=$?
+          tail -200 "$HOME/diag.log" | grep -E "=====|exit:|error|warning|diagnostic|Sendable|isolation|region|Total|ImagePipelineCore|DemoApp|fatal|Trace|assert|written|renderer|Renderer|spawnWork" | head -90 | while IFS= read -r l; do echo "::notice::${l:0:400}"; done
+          exit $st
