@@ -24,13 +24,18 @@ jobs:
         with:
           xcode-version: ${{ matrix.xcode }}
 
+      - name: swift build
+        run: swift build
+
       - name: swift test
         run: |
           xcrun swift --version | head -2 | while IFS= read -r l; do echo "::notice::[xcode ${{ matrix.xcode }}] $l"; done
           set +e
-          swift test 2>&1 | tee .build/sm-test.log
+          LOG="$RUNNER_TEMP/sm-test.log"
+          swift test 2>&1 | tee "$LOG"
           st=${PIPESTATUS[0]}
           set -e
-          echo "::notice::[xcode ${{ matrix.xcode }}] exit=$st suites: $(grep -c "Test Suite .* passed" .build/sm-test.log || true) passed, $(grep -c "Test Suite .* failed" .build/sm-test.log || true) failed"
-          grep -E "error:|Test Suite '.*' failed" .build/sm-test.log | head -20 | while IFS= read -r l; do echo "::error::[xcode ${{ matrix.xcode }}] ${l:0:300}"; done
+          echo "::notice::[xcode ${{ matrix.xcode }}] swift test exit=$st"
+          grep -E "Test Suite|Suite '.*' failed|error:|failed \(" "$LOG" | head -25 | while IFS= read -r l; do echo "::error::[xcode ${{ matrix.xcode }}] ${l:0:300}"; done
+          tail -20 "$LOG" | while IFS= read -r l; do echo "::notice::[xcode ${{ matrix.xcode }}] tail: ${l:0:200}"; done
           exit $st
