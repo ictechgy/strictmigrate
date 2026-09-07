@@ -36,7 +36,7 @@ strictmigrate's bet: split the diagnostics into atomic tasks, let an agent execu
 Requires a Swift 6+ toolchain (Xcode 16+ on macOS).
 
 ```console
-$ git clone https://github.com/<you>/strictmigrate
+$ git clone https://github.com/ictechgy/strictmigrate
 $ cd strictmigrate && swift build -c release
 $ cp .build/release/strictmigrate /usr/local/bin/   # or anywhere on PATH
 ```
