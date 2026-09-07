@@ -1,8 +1,10 @@
 name: diagnose-executor-revert
 
-# TEMPORARY diagnosis workflow — runs the suite under multiple Xcodes and
-# publishes the full test log to a ci-diag branch so it can be read without
-# runner log access. Delete once the root cause is fixed.
+# TEMPORARY diagnosis workflow — collects the data needed to re-pin test
+# expectations to the stable toolchain (Xcode 26.6): verbose measures of the
+# DemoConcurrency fixture before/after the known-good fix, and the KMP
+# boundary fixture's slice/routing output. Publishes everything to the
+# ci-diag-26.6 branch. Delete once the re-pin lands.
 
 on:
   push:
@@ -13,44 +15,116 @@ permissions:
   contents: write
 
 jobs:
-  matrix:
-    name: swift test under Xcode ${{ matrix.xcode }}
+  repin-data:
+    name: collect re-pin data under Xcode 26.6
     runs-on: macos-26
-    strategy:
-      fail-fast: false
-      matrix:
-        xcode: ["26.5", "26.6"]
     steps:
       - uses: actions/checkout@v4
 
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: ${{ matrix.xcode }}
+          xcode-version: "26.6"
 
       - name: swift build
         run: swift build
 
-      - name: swift test
+      - name: demo fixture — baseline, known-good fix, slice
         run: |
-          xcrun swift --version | head -2 | while IFS= read -r l; do echo "::notice::[xcode ${{ matrix.xcode }}] $l"; done
           set +e
-          LOG="$RUNNER_TEMP/sm-test.log"
-          swift test 2>&1 | tee "$LOG"
-          st=${PIPESTATUS[0]}
-          set -e
-          echo "::notice::[xcode ${{ matrix.xcode }}] swift test exit=$st log_lines=$(wc -l < "$LOG" | tr -d ' ')"
-          echo "Test Suite summary: $(grep -E \"Test Suite 'All tests'|Executed [0-9]+ tests\" "$LOG" | tail -4 | tr '\n' ' ')" | while IFS= read -r l; do echo "::notice::[xcode ${{ matrix.xcode }}] ${l:0:400}"; done
-          grep -E "Test Suite '.*' failed|error:|failed \([0-9]+ test|Fatal error|Crash" "$LOG" | head -25 | while IFS= read -r l; do echo "::error::[xcode ${{ matrix.xcode }}] ${l:0:300}"; done
-          exit $st
+          {
+            TOOL="$GITHUB_WORKSPACE/.build/debug/strictmigrate"
+            DBG="$RUNNER_TEMP/demo"
+            rm -rf "$DBG" && mkdir -p "$DBG"
+            cp -R "$GITHUB_WORKSPACE/Examples/DemoConcurrency/Package.swift" "$GITHUB_WORKSPACE/Examples/DemoConcurrency/Sources" "$DBG/"
+            cd "$DBG"
+            git init -q; git config user.email t@t; git config user.name t
+            git add -A; git commit -qm fixture
+            "$TOOL" init; echo "init exit: $?"
+            echo "===== BASELINE VERBOSE ====="
+            "$TOOL" measure --verbose; echo "exit: $?"
+            echo "===== SLICE ====="
+            "$TOOL" slice; echo "exit: $?"
+            echo "===== TASKS ====="
+            "$TOOL" tasks; echo "exit: $?"
+            echo "===== JOURNAL ====="
+            cat strictmigrate.yaml.journal
+          } > "$RUNNER_TEMP/demo-baseline.log" 2>&1
 
-      - name: publish log to ci-diag branch
+          git checkout -q -- . 2>/dev/null
+          rm -f strictmigrate.yaml.journal
+          rm -rf .strictmigrate
+
+          {
+            cd "$DBG"
+            cat > Sources/ImagePipelineCore/Renderer.swift <<'SWIFT'
+          import Foundation
+
+          @MainActor
+          public final class ThumbnailRenderer {
+              public var theme: String = "light"
+
+              public init() {}
+
+              public func render(name: String) -> String {
+                  "\(theme):\(name).png"
+              }
+          }
+
+          public enum RenderService {
+              /// Calls a MainActor-isolated method from a nonisolated context.
+              public static func renderSync(_ renderer: ThumbnailRenderer) -> String {
+                  renderer.render(name: "avatar")
+              }
+
+              public static func spawnWork() {
+                  Task { @MainActor in
+                      let renderer = ThumbnailRenderer()
+                      renderer.theme = "dark"
+                  }
+              }
+          }
+          SWIFT
+            git diff --stat
+            "$TOOL" init
+            echo "===== AFTER-FIX VERBOSE ====="
+            "$TOOL" measure --verbose; echo "exit: $?"
+            echo "===== BUILD ERRORS ====="
+            grep -E "error:|warning:" .strictmigrate/*.log 2>/dev/null | head -25
+          } > "$RUNNER_TEMP/demo-afterfix.log" 2>&1
+          exit 0
+
+      - name: kmp fixture — measure, slice, routing
+        run: |
+          set +e
+          {
+            TOOL="$GITHUB_WORKSPACE/.build/debug/strictmigrate"
+            DBG="$RUNNER_TEMP/kmp"
+            rm -rf "$DBG" && mkdir -p "$DBG"
+            cp -R "$GITHUB_WORKSPACE/Examples/KmpBoundary/." "$DBG/"
+            cd "$DBG"
+            git init -q; git config user.email t@t; git config user.name t
+            git add -A; git commit -qm fixture
+            "$TOOL" init
+            echo "===== KMP MEASURE VERBOSE ====="
+            "$TOOL" measure --verbose; echo "exit: $?"
+            echo "===== KMP SLICE ====="
+            "$TOOL" slice; echo "exit: $?"
+            echo "===== KMP TASKS ====="
+            "$TOOL" tasks
+            echo "===== KMP JOURNAL ====="
+            cat strictmigrate.yaml.journal
+            echo "===== KMP NEXT (routing note) ====="
+            "$TOOL" next --peek 2>&1 | head -40
+          } > "$RUNNER_TEMP/kmp-data.log" 2>&1
+          exit 0
+
+      - name: publish logs to ci-diag branch
         if: always()
         run: |
           git config user.name "ci-diag"
           git config user.email "ci-diag@users.noreply.github.com"
-          BR="ci-diag-${{ matrix.xcode }}"
-          git checkout -q -B "$BR"
-          cp "$RUNNER_TEMP/sm-test.log" "diag-xcode-${{ matrix.xcode }}.log"
-          git add "diag-xcode-${{ matrix.xcode }}.log"
-          git commit -qm "diag: full swift test log under Xcode ${{ matrix.xcode }}"
-          git push -q origin "$BR" --force
+          git checkout -q -B ci-diag-26.6
+          cp "$RUNNER_TEMP/demo-baseline.log" "$RUNNER_TEMP/demo-afterfix.log" "$RUNNER_TEMP/kmp-data.log" .
+          git add demo-baseline.log demo-afterfix.log kmp-data.log
+          git commit -qm "diag: re-pin data under Xcode 26.6"
+          git push -q origin ci-diag-26.6 --force
