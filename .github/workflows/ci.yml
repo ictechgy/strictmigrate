@@ -34,9 +34,10 @@ jobs:
       # without downloading raw logs.
       - name: swift test
         run: |
-          xcrun swift --version | head -2
-          set -o pipefail
+          xcrun swift --version | head -2 | while IFS= read -r l; do echo "::notice::$l"; done
+          set +e
           swift test 2>&1 | tee .build/sm-test.log
           st=$?
+          set -e
           grep -E "error:|Test Suite '.*' failed|failed \([0-9]+ test" .build/sm-test.log | head -40 | while IFS= read -r l; do echo "::error::$l"; done
           exit $st
