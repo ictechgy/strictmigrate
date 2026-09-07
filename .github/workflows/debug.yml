@@ -1,0 +1,57 @@
+name: diagnose-executor-revert
+
+# TEMPORARY diagnosis workflow — reproduces the ExecutorTests revert on this
+# runner's toolchain by measuring the pristine and fixed fixture directly.
+# Delete once the root cause is fixed.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    name: measure pristine vs fixed fixture (temporary)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: swift build
+        run: swift build
+
+      - name: reproduce verdict failure
+        run: |
+          set -e
+          TOOL="$GITHUB_WORKSPACE/.build/debug/strictmigrate"
+          DBG="$HOME/dbg-repro"
+          rm -rf "$DBG" && mkdir -p "$DBG"
+          cp -R Examples/DemoConcurrency/Package.swift Examples/DemoConcurrency/Sources "$DBG/"
+          cd "$DBG"
+          git init -q
+          git config user.email t@t && git config user.name t
+          git add -A && git commit -qm fixture
+
+          "$TOOL" init
+          echo "===== BASELINE (pristine fixture) ====="
+          "$TOOL" measure --verbose 2>&1 | tail -50
+
+          python3 - <<'PY'
+          import re, textwrap
+          src = open("Tests/strictmigrateTests/ExecutorTests.swift").read()
+          m = re.search(r'spawnWorkFixed = """\n(.*?)\n\s*"""', src, re.S)
+          assert m, "spawnWorkFixed literal not found"
+          open("Sources/ImagePipelineCore/Renderer.swift", "w").write(textwrap.dedent(m.group(1)) + "\n")
+          PY
+
+          echo "===== AFTER known-good fix ====="
+          "$TOOL" measure --verbose 2>&1 | tail -50
+          echo "===== git diff stat ====="
+          git diff --stat
+          echo "===== raw log tail ====="
+          find .strictmigrate -type f -name '*.log' -exec sh -c 'echo "--- $1"; tail -40 "$1"' _ {} \;
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}
