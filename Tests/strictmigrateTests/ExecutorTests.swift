@@ -377,7 +377,7 @@ final class GitWorkingCopyTests: XCTestCase {
         // Plain paths pass through untouched.
         XCTAssertEqual(GitWorkingCopy.unquoteGitPath("Sources/App/Main.swift"), "Sources/App/Main.swift")
         // core.quotepath (the default) C-quotes non-ASCII bytes as octal UTF-8.
-        XCTAssertEqual(GitWorkingCopy.unquoteGitPath("\"Sources/\\354\\225\\234.swift\""), "Sources/한.swift")
+        XCTAssertEqual(GitWorkingCopy.unquoteGitPath("\"Sources/\\355\\225\\234.swift\""), "Sources/한.swift")
         // Escaped quotes and backslashes inside a quoted path.
         XCTAssertEqual(GitWorkingCopy.unquoteGitPath("\"a\\\"b.swift\""), "a\"b.swift")
         XCTAssertEqual(GitWorkingCopy.unquoteGitPath("\"a\\\\b.swift\""), "a\\b.swift")
