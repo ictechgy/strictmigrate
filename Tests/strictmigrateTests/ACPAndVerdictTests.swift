@@ -154,11 +154,16 @@ final class ACPAdapterTests: XCTestCase {
             r"(public static func spawnWork\\(\\) \\{\\n).*?(\\n    \\})",
             re.S,
         )
+        # \\\\1 in this Swift literal reaches python as \\1 — re.sub's group
+        # reference. (A single \\\\ would become the \\x01 control character in
+        # python, silently corrupting the fixture; the executor's
+        # untrustworthy-measurement gate now reverts such edits instead of
+        # committing them, so the mock has to produce clean Swift.)
         REPLACEMENT = (
-            "\\1        Task { @MainActor in\\n"
+            "\\\\1        Task { @MainActor in\\n"
             "            let renderer = ThumbnailRenderer()\\n"
             "            renderer.theme = \\"dark\\"\\n"
-            "        }\\2"
+            "        }\\\\2"
         )
 
 
