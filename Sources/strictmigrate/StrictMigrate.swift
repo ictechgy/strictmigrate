@@ -10,7 +10,7 @@ struct StrictMigrate: ParsableCommand {
             The compiler is the judge, the journal is the source of truth.
             v0.1 measures diagnostics per target and tracks progress — no agent required.
             """,
-        version: "0.5.0",
+        version: "0.5.1",
         subcommands: [
             Init.self, Measure.self, Status.self, Slice.self, Next.self, Tasks.self, Run.self, Skip.self,
         ]
