@@ -247,7 +247,13 @@ final class ACPAdapterTests: XCTestCase {
         )
 
         var mutableJournal = journal
-        let reports = try executor.execute(taskIDs: ["t-0003"], journal: &mutableJournal) { _ in }
+        let reports = try executor.execute(taskIDs: ["t-0003"], journal: &mutableJournal) { line in
+            print("   [acp-loop] \(line)")
+        }
+
+        if !reports.isEmpty, !reports[0].passed {
+            print("   [acp-loop] attempt notes: \(mutableJournal.tasks.first?.notes ?? [])")
+        }
 
         XCTAssertEqual(reports.count, 1)
         XCTAssertTrue(reports[0].passed, "ACP-driven attempt should pass and commit")
