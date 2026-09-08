@@ -273,6 +273,28 @@ final class TaskLifecycleTests: XCTestCase {
         XCTAssertEqual(journal.tasks.first { $0.id == "t-0002" }?.status, .queued)
     }
 
+    func testReconcileKeepsTasksOpenOnUntrustworthyMeasurement() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+
+        var journal = Journal()
+        journal.tasks = [
+            TaskRecord(id: "t-0001", target: "Core", file: "Sources/Core/Thing.swift", symbols: ["state"], status: .assigned),
+        ]
+
+        // The build broke on a syntax error: zero tracked diagnostics were
+        // emitted. Closing the task on that would be a false pass.
+        let closed = journal.reconcileTasks(
+            against: [],
+            packageRoot: root,
+            buildExitCode: 1,
+            measurementValid: false
+        )
+
+        XCTAssertEqual(closed, [])
+        XCTAssertEqual(journal.tasks.first?.status, .assigned, "an invalid measurement must keep tasks open")
+    }
+
     func testNextAndMarkAssigned() {
         var journal = Journal()
         journal.tasks = [

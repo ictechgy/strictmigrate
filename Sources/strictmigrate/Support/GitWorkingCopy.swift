@@ -55,7 +55,7 @@ struct GitWorkingCopy {
 
         return result.stdoutText
             .split(separator: "\n", omittingEmptySubsequences: true)
-            .compactMap { line in parseStatusLine(String(line)) }
+            .flatMap { parseStatusLine(String($0)) }
     }
 
     /// True when the only uncommitted changes are under the whitelisted
@@ -100,42 +100,65 @@ struct GitWorkingCopy {
         return result.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Restores `paths` to HEAD and removes untracked ones — the atomic
-    /// revert boundary after a failed attempt.
+    /// Restores `paths` to HEAD and removes the rest — the atomic revert
+    /// boundary after a failed attempt. Membership is decided against HEAD,
+    /// not the index: a file the agent created *and staged* is absent from
+    /// HEAD, so `checkout HEAD` would fail — it must be unstaged and deleted
+    /// instead.
     func discard(paths: [String]) throws {
-        let tracked = paths.filter { path in
-            let check = try? Shell.run(
-                "git", arguments: ["ls-files", "--error-unmatch", "--", path], currentDirectory: root
-            )
-            return (check?.exitCode ?? 1) == 0
-        }
-        let untracked = paths.filter { !tracked.contains($0) }
+        guard !paths.isEmpty else { return }
+        for path in paths {
+            let inHEAD = (try? Shell.run(
+                "git", arguments: ["cat-file", "-e", "HEAD:\(path)"], currentDirectory: root
+            ))?.exitCode == 0
 
-        if !tracked.isEmpty {
-            let restore = try Shell.run("git", arguments: ["checkout", "HEAD", "--"] + tracked, currentDirectory: root)
-            guard restore.exitCode == 0 else {
-                throw GitError.gitFailed(command: "git checkout", exitCode: restore.exitCode, stderr: restore.stderrText)
+            if inHEAD {
+                let restore = try Shell.run("git", arguments: ["checkout", "HEAD", "--", path], currentDirectory: root)
+                guard restore.exitCode == 0 else {
+                    throw GitError.gitFailed(command: "git checkout", exitCode: restore.exitCode, stderr: restore.stderrText)
+                }
+                continue
             }
-        }
-        for path in untracked {
-            let absolute = (root as NSString).appendingPathComponent(path)
-            try? FileManager.default.removeItem(atPath: absolute)
+
+            // Not in HEAD: staged-new or untracked. `git rm -f` unstages and
+            // deletes in one step; a path that was never staged is removed
+            // from the worktree directly.
+            let remove = try? Shell.run(
+                "git", arguments: ["rm", "-f", "-q", "--", path], currentDirectory: root
+            )
+            if remove?.exitCode != 0 {
+                let absolute = (root as NSString).appendingPathComponent(path)
+                try? FileManager.default.removeItem(atPath: absolute)
+            }
         }
     }
 
-    /// `?? path` (untracked), `XY path` (index/worktree states), renames as
-    /// the destination path only.
-    private func parseStatusLine(_ line: String) -> GitChange? {
-        guard line.count >= 4 else { return nil }
+    /// `?? path` (untracked), `XY path` (index/worktree states). Renames
+    /// (`R  old -> new`) yield BOTH paths: the destination with the line's
+    /// status and the source as a deletion — reverting a rename must restore
+    /// the old path and drop the new one, so callers need both.
+    private func parseStatusLine(_ line: String) -> [GitChange] {
+        guard line.count >= 4 else { return [] }
         let index = Array(line)[0]
         let worktree = Array(line)[1]
-        var path = String(line.dropFirst(3))
+        var rawPath = String(line.dropFirst(3))
 
-        if let arrow = path.range(of: " -> ") {
-            path = String(path[arrow.upperBound...])
+        var renameSource: String?
+        if let arrow = rawPath.range(of: " -> ") {
+            renameSource = String(rawPath[rawPath.startIndex..<arrow.lowerBound])
+            rawPath = String(rawPath[arrow.upperBound...])
         }
-        path = Self.unquoteGitPath(path.trimmingCharacters(in: .whitespaces))
-        guard !path.isEmpty else { return nil }
+
+        var results: [GitChange] = []
+        if let renameSource {
+            let source = Self.unquoteGitPath(renameSource.trimmingCharacters(in: .whitespaces))
+            if !source.isEmpty {
+                results.append(GitChange(kind: .deleted, path: source))
+            }
+        }
+
+        let path = Self.unquoteGitPath(rawPath.trimmingCharacters(in: .whitespaces))
+        guard !path.isEmpty else { return results }
 
         let kind: GitChange.Kind
         switch (index, worktree) {
@@ -144,7 +167,8 @@ struct GitWorkingCopy {
         case ("D", _), (_, "D"): kind = .deleted
         default: kind = .modified
         }
-        return GitChange(kind: kind, path: path)
+        results.append(GitChange(kind: kind, path: path))
+        return results
     }
 
     /// Unquotes a porcelain path. Git C-quotes paths containing non-ASCII

@@ -77,15 +77,20 @@ enum Shell {
             throw ShellError.launchFailed(command: ([command] + arguments).joined(separator: " "), underlying: error)
         }
 
-        if let stdinPipe, let stdin {
-            // Prompt-sized payloads fit the pipe buffer; agents drain stdin
-            // immediately, so larger writes cannot stall either side.
-            try? stdinPipe.fileHandleForWriting.write(contentsOf: stdin)
-            try? stdinPipe.fileHandleForWriting.close()
-        }
-
         drain(stdoutPipe.fileHandleForReading, into: stdoutBuffer, group: group)
         drain(stderrPipe.fileHandleForReading, into: stderrBuffer, group: group)
+
+        // stdin write runs in parallel with the output drains: a child that
+        // fills its stdout pipe before reading stdin, combined with a large
+        // prompt, would otherwise deadlock both sides.
+        if let stdinPipe, let stdin {
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                defer { group.leave() }
+                try? stdinPipe.fileHandleForWriting.write(contentsOf: stdin)
+                try? stdinPipe.fileHandleForWriting.close()
+            }
+        }
 
         process.waitUntilExit()
         group.wait()

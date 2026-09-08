@@ -13,19 +13,21 @@ struct AttemptVerdict: Equatable, Sendable {
 }
 
 enum VerdictCalculator {
+    /// Preferred entry point for the executor loop: `beforeCounts` must be
+    /// resolved against the PRE-edit sources (captured right after the
+    /// previous measurement). Resolving the before side lazily against
+    /// post-edit sources would misattribute diagnostics whose lines shifted
+    /// when lines were added or removed above them — a pure line shift must
+    /// not read as a new regression.
     static func verdict(
-        before: [ConcurrencyDiagnostic],
+        beforeCounts: [SymbolKey: Int],
         after: [ConcurrencyDiagnostic],
         task: TaskRecord,
         packageRoot: String,
         fileTarget: ((String) -> String?)? = nil
     ) -> AttemptVerdict {
         let taskKeys = Set(task.symbols.map { SymbolKey(file: task.file, symbol: $0) })
-        // One resolver across both sides: attribution is by name (line drift
-        // between measurements is tolerated by design), and both sides resolve
-        // against the current sources — sharing the cache halves the reads.
         var resolver = SymbolResolver(packageRoot: packageRoot)
-        let beforeCounts = symbolCounts(before, resolver: &resolver)
         let afterCounts = symbolCounts(after, resolver: &resolver)
 
         let taskClean = taskKeys.isDisjoint(with: Set(afterCounts.keys))
@@ -44,6 +46,35 @@ enum VerdictCalculator {
         }
 
         return AttemptVerdict(taskClean: taskClean, regressionsElsewhere: regressions.sorted())
+    }
+
+    /// Convenience for callers that hold both sides of one snapshot (tests,
+    /// offline analysis): both counts resolve against the current sources.
+    static func verdict(
+        before: [ConcurrencyDiagnostic],
+        after: [ConcurrencyDiagnostic],
+        task: TaskRecord,
+        packageRoot: String,
+        fileTarget: ((String) -> String?)? = nil
+    ) -> AttemptVerdict {
+        verdict(
+            beforeCounts: symbolCounts(before, packageRoot: packageRoot),
+            after: after,
+            task: task,
+            packageRoot: packageRoot,
+            fileTarget: fileTarget
+        )
+    }
+
+    /// (file, symbol) → diagnostic count, resolved against the sources as
+    /// they are right now. Call this immediately after a measurement to
+    /// freeze that measurement's attribution.
+    static func symbolCounts(
+        _ diagnostics: [ConcurrencyDiagnostic],
+        packageRoot: String
+    ) -> [SymbolKey: Int] {
+        var resolver = SymbolResolver(packageRoot: packageRoot)
+        return symbolCounts(diagnostics, resolver: &resolver)
     }
 
     private static func symbolCounts(

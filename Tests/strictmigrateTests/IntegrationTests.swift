@@ -116,4 +116,26 @@ final class ShellTests: XCTestCase {
             XCTAssertTrue("\(error)".contains("could not launch"))
         }
     }
+
+    func testLargeStdinWithLeadingStdoutDoesNotDeadlock() throws {
+        try XCTSkipIf(Shell.run("/usr/bin/env", arguments: ["python3", "--version"]).exitCode != 0)
+        // The child fills its stdout pipe (1 MiB) before reading stdin
+        // (1 MiB). With a synchronous stdin write ahead of the output drains,
+        // both pipes fill and neither side proceeds.
+        let script = """
+            import sys
+            sys.stdout.write("X" * 1048576)
+            sys.stdout.flush()
+            data = sys.stdin.buffer.read(1048576)
+            sys.stdout.write("\\nread %d\\n" % len(data))
+            """
+        let result = try Shell.run(
+            "/usr/bin/env",
+            arguments: ["python3", "-c", script],
+            stdin: Data(repeating: 65, count: 1_048_576)
+        )
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertGreaterThan(result.stdout.count, 1_000_000)
+        XCTAssertTrue(result.stdoutText.contains("read 1048576"))
+    }
 }

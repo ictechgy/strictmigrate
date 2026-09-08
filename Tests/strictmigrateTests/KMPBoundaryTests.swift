@@ -102,6 +102,31 @@ final class GradleTargetHeuristicTests: XCTestCase {
         XCTAssertEqual(target, "shared/commonMain")
     }
 
+    func testHybridTallyAttributesEachDiagnosticExactlyOnce() throws {
+        _ = mkdir("shared/src/commonMain/kotlin")
+        touch("shared/build.gradle.kts")
+        touch("shared/src/commonMain/kotlin/State.kt")
+
+        let mapper = HybridTargetMapper(
+            spm: TargetMapper(targets: [PackageTarget(name: "App", path: "Sources/App")]),
+            repoRoot: root
+        )
+        func diag(_ file: String) -> ConcurrencyDiagnostic {
+            ConcurrencyDiagnostic(file: file, line: 1, column: 1, severity: .error, category: .isolation, message: "m", diagnosticID: nil)
+        }
+
+        let counts = mapper.tally([
+            diag("Sources/App/Main.swift"),
+            diag("shared/src/commonMain/kotlin/State.kt"),
+        ])
+
+        XCTAssertEqual(counts["App"]?.trackedTotal, 1)
+        XCTAssertEqual(counts["shared/commonMain"]?.trackedTotal, 1, "Kotlin diagnostics must land in their Gradle target, not (unattributed)")
+        XCTAssertNil(counts["(unattributed)"], "no diagnostic may be double-counted into (unattributed)")
+        let total = counts.values.reduce(0) { $0 + $1.trackedTotal }
+        XCTAssertEqual(total, 2, "totals are preserved — each diagnostic counted exactly once")
+    }
+
     func testNestedModuleAndIosSourceSet() throws {
         _ = mkdir("features/auth/src/iosMain/kotlin")
         touch("features/auth/build.gradle")

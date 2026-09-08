@@ -180,16 +180,21 @@ struct HybridTargetMapper: Sendable {
         return nil
     }
 
-    /// Per-target tallies: SPM targets, discovered Kotlin source sets (zero
-    /// entries included), and `(unattributed)` for anything else.
+    /// Per-target tallies: every diagnostic is attributed exactly once through
+    /// the hybrid mapper — SPM targets for Swift files, Gradle module/source
+    /// sets for `.kt` files, `(unattributed)` for the rest. Known targets get
+    /// zero entries so clean ones show up in the journal too.
     func tally(_ diagnostics: [ConcurrencyDiagnostic]) -> [String: DiagnosticCounts] {
-        var counts = spm.tally(diagnostics)
+        var counts: [String: DiagnosticCounts] = [:]
+        for target in spm.targets {
+            counts[target.name] = .zero
+        }
         for target in GradleTargetHeuristic.sourceSetTargets(repoRoot: repoRoot) where counts[target] == nil {
             counts[target] = .zero
         }
         for diagnostic in diagnostics where diagnostic.category.isTracked {
-            guard target(forFile: diagnostic.file) == nil else { continue }
-            counts[TargetMapper.unattributed, default: .zero].add(diagnostic.category)
+            let name = target(forFile: diagnostic.file) ?? TargetMapper.unattributed
+            counts[name, default: .zero].add(diagnostic.category)
         }
         return counts
     }

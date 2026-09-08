@@ -244,14 +244,18 @@ extension Journal {
     /// Close open tasks whose (file, symbol) pairs no longer produce tracked
     /// diagnostics. A task passes when its fix survived the latest build;
     /// `buildExitCode` is recorded honestly (other targets may still fail).
+    /// - Parameter measurementValid: false when the measurement is not
+    ///   trustworthy (non-concurrency build errors — counts may be
+    ///   incomplete); then nothing closes and tasks stay open.
     /// Returns ids of tasks closed as passed.
     @discardableResult
     mutating func reconcileTasks(
         against diagnostics: [ConcurrencyDiagnostic],
         packageRoot: String,
-        buildExitCode: Int32?
+        buildExitCode: Int32?,
+        measurementValid: Bool = true
     ) -> [String] {
-        guard !openTasks.isEmpty else { return [] }
+        guard measurementValid, !openTasks.isEmpty else { return [] }
         let remaining = Journal.symbolKeys(for: diagnostics, packageRoot: packageRoot)
 
         var closed: [String] = []

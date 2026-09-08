@@ -305,6 +305,41 @@ final class VerdictCalculatorTests: XCTestCase {
         XCTAssertFalse(verdict.passed)
         XCTAssertEqual(verdict.regressionsElsewhere, ["Sources/Core/B.swift [other] +1"])
     }
+
+    func testPureLineShiftIsNotARegressionButNewDiagnosticsStillAre() throws {
+        // Freeze attribution against the pre-edit source…
+        let before = [diagnostic("Sources/Core/B.swift", 1)]
+        let beforeCounts = VerdictCalculator.symbolCounts(before, packageRoot: packageRoot)
+
+        // …then push `other` three lines down — same symbol, same diagnostic,
+        // new line number. Resolved lazily against post-edit sources the
+        // before side would land on the wrong symbol and read as +1.
+        try """
+        // shifted
+        // by
+        // three lines
+        func other() {}
+        """.write(
+            toFile: (packageRoot as NSString).appendingPathComponent("Sources/Core/B.swift"),
+            atomically: true, encoding: .utf8
+        )
+
+        let shifted = VerdictCalculator.verdict(
+            beforeCounts: beforeCounts,
+            after: [diagnostic("Sources/Core/B.swift", 4)],
+            task: task, packageRoot: packageRoot
+        )
+        XCTAssertTrue(shifted.passed, "a pure line shift must not read as a new regression")
+
+        // A genuinely new second diagnostic on that symbol still must.
+        let grown = VerdictCalculator.verdict(
+            beforeCounts: beforeCounts,
+            after: [diagnostic("Sources/Core/B.swift", 4), diagnostic("Sources/Core/B.swift", 4)],
+            task: task, packageRoot: packageRoot
+        )
+        XCTAssertFalse(grown.passed)
+        XCTAssertEqual(grown.regressionsElsewhere, ["Sources/Core/B.swift [other] +1"])
+    }
 }
 
 final class GitWorkingCopyTests: XCTestCase {
@@ -356,6 +391,32 @@ final class GitWorkingCopyTests: XCTestCase {
         XCTAssertEqual(try git.shortHEAD(), hash)
         // b.txt remains uncommitted.
         XCTAssertEqual(try git.changes().map(\.path), ["b.txt"])
+    }
+
+    func testDiscardRemovesStagedNewFile() throws {
+        let git = GitWorkingCopy(root: repo)
+        try "new\n".write(toFile: (repo as NSString).appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)
+        _ = try Shell.run("git", arguments: ["add", "b.txt"], currentDirectory: repo)
+
+        // Staged but absent from HEAD: `checkout HEAD` would fail — the file
+        // must be unstaged and deleted instead.
+        try git.discard(paths: ["b.txt"])
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: (repo as NSString).appendingPathComponent("b.txt")))
+        XCTAssertTrue(try git.isClean(allowing: PathWhitelist(journalPath: "j.yaml")))
+    }
+
+    func testDiscardRestoresStagedRename() throws {
+        let git = GitWorkingCopy(root: repo)
+        _ = try Shell.run("git", arguments: ["mv", "a.txt", "renamed.txt"], currentDirectory: repo)
+
+        let changes = try git.changes()
+        XCTAssertEqual(Set(changes.map(\.path)), ["a.txt", "renamed.txt"], "a rename must surface both paths")
+
+        try git.discard(paths: changes.map(\.path))
+        XCTAssertEqual(try String(contentsOfFile: (repo as NSString).appendingPathComponent("a.txt"), encoding: .utf8), "hello\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: (repo as NSString).appendingPathComponent("renamed.txt")))
+        XCTAssertTrue(try git.isClean(allowing: PathWhitelist(journalPath: "j.yaml")))
     }
 
     func testWhitelistAllowsHarnessPathsOnly() {

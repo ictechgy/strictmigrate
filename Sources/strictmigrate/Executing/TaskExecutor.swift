@@ -62,8 +62,12 @@ struct TaskExecutor {
         var reports: [TaskExecutionReport] = []
         // Diagnostics of the tree as last measured: computed lazily once per
         // run and chained across passed tasks (failed attempts restore the
-        // exact pre-state, so the cache stays valid).
+        // exact pre-state, so the cache stays valid). The symbol counts are
+        // frozen against the sources of that measurement — comparing them
+        // with counts from the post-edit build is what keeps pure line
+        // shifts from reading as regressions.
         var preDiagnostics: [ConcurrencyDiagnostic]?
+        var preSymbolCounts: [SymbolKey: Int]?
         // Kotlin source snapshot for boundary routing, rebuilt after each
         // measurement — routing every attempt against fresh tree walks would
         // re-read the whole repository each time.
@@ -87,7 +91,16 @@ struct TaskExecutor {
             if preDiagnostics == nil {
                 log("Measuring current state before dispatch …")
                 let outcome = try measure()
+                guard outcome.isTrustworthy else {
+                    let blocking = outcome.diagnostics
+                        .filter { $0.category == .unrelated && $0.severity == .error }
+                        .count
+                    log("Measurement not trustworthy — \(blocking) non-concurrency error(s) in the build (syntax, unresolved identifiers, …).")
+                    log("Fix those first; the revert boundary needs a build whose concurrency counts are complete.")
+                    return []
+                }
                 preDiagnostics = outcome.diagnostics
+                preSymbolCounts = VerdictCalculator.symbolCounts(outcome.diagnostics, packageRoot: root)
                 kotlinIndex = KotlinSourceIndex(repoRoot: root)
                 persist(lastBuildLog: outcome.rawLog)
             }
@@ -171,8 +184,26 @@ struct TaskExecutor {
                 log("   agent finished (exit \(outcome.exitCode)); measuring …")
                 let post = try measure()
                 persist(lastBuildLog: post.rawLog)
+
+                // A build with non-concurrency errors cannot prove the task
+                // clean — the compiler may simply have stopped early. Treat
+                // it as a failed attempt and revert, like any other.
+                if !post.isTrustworthy {
+                    let blocking = post.diagnostics
+                        .filter { $0.category == .unrelated && $0.severity == .error }
+                        .count
+                    try git.discard(paths: changed.map(\.path))
+                    failureNote =
+                        "measurement not trustworthy — the edit left \(blocking) non-concurrency error(s) (e.g. syntax); reverted"
+                    attempts.append(
+                        AttemptReport(number: attempt, agentExitCode: outcome.exitCode, note: failureNote)
+                    )
+                    log("   \(failureNote).")
+                    continue
+                }
+
                 let verdict = VerdictCalculator.verdict(
-                    before: preDiagnostics!,
+                    beforeCounts: preSymbolCounts!,
                     after: post.diagnostics,
                     task: task,
                     packageRoot: root,
@@ -235,7 +266,8 @@ struct TaskExecutor {
                 )
                 journal.applyMeasurement(at: Date(), level: options.level, results: post.perTarget)
                 _ = journal.reconcileTasks(
-                    against: post.diagnostics, packageRoot: root, buildExitCode: post.buildExitCode
+                    against: post.diagnostics, packageRoot: root, buildExitCode: post.buildExitCode,
+                    measurementValid: post.isTrustworthy
                 )
                 if let commitHash {
                     _ = journal.recordCommit(
@@ -248,6 +280,7 @@ struct TaskExecutor {
                 }
                 try JournalStore.save(journal, to: journalPath)
                 preDiagnostics = post.diagnostics
+                preSymbolCounts = VerdictCalculator.symbolCounts(post.diagnostics, packageRoot: root)
                 kotlinIndex = KotlinSourceIndex(repoRoot: root)
                 if let commitHash {
                     log("   passed — committed \(commitHash) (\(commitPaths.count) file\(commitPaths.count == 1 ? "" : "s")), journal updated.")

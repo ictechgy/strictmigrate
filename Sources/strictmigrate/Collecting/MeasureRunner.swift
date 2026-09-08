@@ -20,6 +20,17 @@ struct MeasureOutcome {
     var unrelatedCount: Int {
         diagnostics.filter { $0.category == .unrelated }.count
     }
+
+    /// False when the build produced non-concurrency errors (syntax,
+    /// unresolved identifiers, …): the compiler may have stopped before
+    /// emitting every concurrency diagnostic, so tracked counts can be
+    /// incomplete and tasks must not be closed — or attempts passed — on
+    /// such a measurement. Unrelated *warnings* (style noise) stay
+    /// trustworthy; a build failing on tracked concurrency errors alone is
+    /// the normal mid-migration case and trustworthy too.
+    var isTrustworthy: Bool {
+        !diagnostics.contains { $0.category == .unrelated && $0.severity == .error }
+    }
 }
 
 /// Orchestrates collection: run (or read) the build, parse, attribute to targets.

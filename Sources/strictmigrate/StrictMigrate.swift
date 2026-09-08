@@ -128,9 +128,17 @@ extension StrictMigrate {
             let closedTasks = journal.reconcileTasks(
                 against: outcome.diagnostics,
                 packageRoot: root,
-                buildExitCode: outcome.buildExitCode
+                buildExitCode: outcome.buildExitCode,
+                measurementValid: outcome.isTrustworthy
             )
             try JournalStore.save(journal, to: journalPath)
+
+            if !outcome.isTrustworthy {
+                let blocking = outcome.diagnostics
+                    .filter { $0.category == .unrelated && $0.severity == .error }
+                    .count
+                warn("measurement not trustworthy — \(blocking) non-concurrency error(s) in the build; tasks were left open (counts may be incomplete)")
+            }
 
             let workDirectory = try JournalStore.ensureWorkDirectory(in: root)
             let logPath = (workDirectory as NSString).appendingPathComponent(
